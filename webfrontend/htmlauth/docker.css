@@ -1,0 +1,123 @@
+.pluginMessage {
+	text-align: center;
+}
+
+.page_content {
+	margin: 0 !important;
+}
+
+/* Die Basis-Stylesheet-Regel fuer .ui-btn setzt Breite/Blockdarstellung mit
+   Vorrang, der eine reine Inline-Style-Angabe nicht mehr schlaegt - deshalb
+   hier mit !important. Schaltflaechen sollen so breit wie ihr Text sein und
+   linksbuendig stehen, nicht die ganze Kartenbreite einnehmen. */
+.dk-btn-schmal {
+	display: inline-block !important;
+	width: auto !important;
+	margin: 6px 0 !important;
+}
+
+/* Statuskacheln */
+.dk-kacheln {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin: 10px 0 18px;
+}
+.dk-kachel {
+	border: 1px solid #ddd;
+	border-radius: 10px;
+	padding: 10px 14px;
+	min-width: 130px;
+	background: #fafafa;
+}
+.dk-kachel .dk-kachel-titel {
+	display: block;
+	font-size: 0.85em;
+	color: #555;
+}
+.dk-kachel .dk-kachel-wert {
+	display: block;
+	font-size: 1.4em;
+	font-weight: 700;
+	color: #33691e;
+}
+.dk-an  { color: #1a7f1a; }
+.dk-aus { color: #b00000; }
+
+/* Meldungen */
+.dk-hinweis, .dk-warnung {
+	border-radius: 6px;
+	padding: 10px 14px;
+	margin: 12px 0;
+	font-size: 0.92em;
+}
+.dk-hinweis {
+	border: 1px solid #cfe3b0;
+	background: #f2f8ea;
+}
+.dk-warnung {
+	border: 1px solid #f0c9a0;
+	background: #fdf4ec;
+}
+
+/* Containertabelle */
+.dk-tabelle {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 8px 0 18px;
+	font-size: 0.92em;
+}
+.dk-tabelle th, .dk-tabelle td {
+	border: 1px solid #ccc;
+	padding: 6px 8px;
+	text-align: left;
+	vertical-align: top;
+}
+.dk-tabelle th {
+	background: #eef3e6;
+	font-weight: 600;
+}
+.dk-mono {
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 0.94em;
+}
+
+/* Administratorkennwort */
+.dk-passwort summary {
+	cursor: pointer;
+	font-weight: 600;
+	margin: 6px 0;
+}
+.dk-passwort-wert {
+	font-family: Consolas, "Courier New", monospace;
+	font-size: 1.1em;
+	letter-spacing: 0.03em;
+	background: #f0f0f0;
+	padding: 4px 8px;
+	border-radius: 4px;
+	display: inline-block;
+	margin: 6px 0;
+	user-select: all;
+}
+
+/* Karten: fasst zusammengehoerige Inhalte sichtbar zu einem Block zusammen,
+   statt sie als lose aufeinanderfolgende Ueberschriften darzustellen. */
+.dk-karte {
+	border: 1px solid #ddd;
+	border-radius: 10px;
+	background: #fff;
+	padding: 14px 18px 18px;
+	margin: 0 0 16px;
+}
+.dk-karte h3 {
+	margin: 0 0 8px;
+}
+.dk-karte h4 {
+	margin: 0 0 6px;
+	font-size: 0.98em;
+}
+.dk-trenner {
+	border: none;
+	border-top: 1px solid #eee;
+	margin: 16px 0;
+}

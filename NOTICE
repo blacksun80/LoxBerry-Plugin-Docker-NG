@@ -1,0 +1,51 @@
+Docker NG - LoxBerry-Plugin
+Copyright 2026 Michael Kaufmann
+
+Dieses Werk enthaelt Bestandteile aus:
+
+    loxberry-plugin-docker
+    Copyright Michael Miklis (michaelmiklis.de)
+    https://github.com/michaelmiklis/loxberry-plugin-docker
+    Lizenziert unter der Apache License, Version 2.0
+
+Abschnitt 4 (b) der Apache-Lizenz 2.0 verlangt, dass abgeleitete Werke die
+vorgenommenen Aenderungen deutlich kennzeichnen. Es sind diese:
+
+  * Eigene Plugin-Kennung (NAME und FOLDER "dockerng", eigene Autorenangabe).
+    Docker NG ist damit ein eigenstaendiges Plugin und kein Update des
+    Originals - beide lassen sich nebeneinander installieren.
+
+  * postroot.sh: Portainer bekommt beim Einrichten automatisch ein zufaellig
+    erzeugtes Administratorkennwort ueber --admin-password-file gesetzt, statt
+    ein manuell aus dem Containerprotokoll abzulesendes Setup-Token zu
+    verlangen. --http-enabled ergaenzt: ab Portainer CE 2.19 blieb Port 9000
+    sonst stumm (Weiterleitung auf /timeout.html statt der Anmeldeseite).
+
+  * preroot.sh (neu) und postroot.sh: die Konfiguration (inkl. des
+    Administratorkennworts) wird vor einem Update gesichert und danach
+    zurueckgeholt. LoxBerry loescht den Konfigurationsordner bei jedem Update,
+    bevor die Installation abgeschlossen ist.
+
+  * webfrontend/htmlauth/index.cgi, templates/index.html: vollstaendig neue
+    Oberflaeche mit Statuskacheln, Containertabelle, Kennwortanzeige und der
+    Schaltflaeche "Portainer neu einrichten" - ersetzt den reinen
+    "Portainer in neuem Fenster oeffnen"-Knopf des Originals.
+
+  * cron/cron.05min, config/mqtt_subscriptions.cfg: Containerzustand wird per
+    MQTT veroeffentlicht (LoxBerry::IO::mqtt_retain) und das Thema automatisch
+    beim MQTT-Gateway registriert.
+
+  * bin/DockerLib.pm (neu): buendelt die Logik fuer CGI, Cronjob und
+    Installationsskript an einer Stelle.
+
+  * LoxBerry::Log korrekt eingebunden (docker_log() in DockerLib.pm) - das im
+    Original bereits gesetzte CUSTOM_LOGLEVELS=true hatte bislang keine
+    Wirkung, weil kein Code die Bibliothek nutzte.
+
+  * dpkg/apt: software-properties-common und apt-transport-https entfernt.
+    Ersteres stammt aus der Ubuntu-Welt und laesst apt unter Debian trixie mit
+    Fehler 100 abbrechen; Letzteres ist seit apt 1.5 ein leeres
+    Uebergangspaket.
+
+  * plugin.cfg: LB_MINIMUM auf 3.0.0 belassen (bewusst weiterhin LB3-
+    kompatibel, im Gegensatz zu V4-exklusiven Plugins).

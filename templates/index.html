@@ -1,0 +1,76 @@
+<TMPL_LOOP FEHLER>
+<div class="dk-warnung"><TMPL_VAR TEXT></div>
+</TMPL_LOOP>
+<TMPL_IF MELDUNG>
+<div class="dk-hinweis"><TMPL_VAR MELDUNG></div>
+</TMPL_IF>
+
+<TMPL_IF DOCKER_OK>
+<TMPL_ELSE>
+<TMPL_IF DOCKER_JA>
+<div class="dk-warnung"><b><TMPL_VAR lblNichtAnsprechbarTitel></b><br><TMPL_VAR ZustandMeldung></div>
+</TMPL_IF>
+</TMPL_IF>
+
+<div class="dk-kacheln">
+	<div class="dk-kachel"><span class="dk-kachel-titel"><TMPL_VAR lblKDocker></span>
+		<span class="dk-kachel-wert <TMPL_IF DOCKER_JA>dk-an<TMPL_ELSE>dk-aus</TMPL_IF>"><TMPL_IF DOCKER_JA><TMPL_VAR lblJa><TMPL_ELSE><TMPL_VAR lblNein></TMPL_IF></span></div>
+	<div class="dk-kachel"><span class="dk-kachel-titel"><TMPL_VAR lblKGesamt></span>
+		<span class="dk-kachel-wert"><TMPL_VAR GESAMT></span></div>
+	<div class="dk-kachel"><span class="dk-kachel-titel"><TMPL_VAR lblKLaeuft></span>
+		<span class="dk-kachel-wert"><TMPL_VAR LAEUFT></span></div>
+	<div class="dk-kachel"><span class="dk-kachel-titel"><TMPL_VAR lblKGestoppt></span>
+		<span class="dk-kachel-wert"><TMPL_VAR GESTOPPT></span></div>
+	<div class="dk-kachel"><span class="dk-kachel-titel"><TMPL_VAR lblKPortainer></span>
+		<span class="dk-kachel-wert <TMPL_IF PORTAINER_LAEUFT>dk-an<TMPL_ELSE>dk-aus</TMPL_IF>"><TMPL_IF PORTAINER_LAEUFT><TMPL_VAR lblStatusLaeuft><TMPL_ELSE><TMPL_VAR lblStatusGestoppt></TMPL_IF></span></div>
+</div>
+
+<div class="dk-karte">
+	<h3><TMPL_VAR lblPortainerTitel></h3>
+	<p><TMPL_VAR lblPortainerText></p>
+	<a class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" href="forward.html" target="_blank" rel="noopener"><TMPL_VAR lblBOeffnen></a>
+
+	<hr class="dk-trenner">
+
+	<h4><TMPL_VAR lblPasswortTitel></h4>
+	<TMPL_IF PASSWORT>
+	<p><TMPL_VAR lblPasswortText></p>
+	<details class="dk-passwort">
+		<summary><TMPL_VAR lblPasswortAnzeigen></summary>
+		<span class="dk-passwort-wert"><TMPL_VAR PASSWORT></span>
+	</details>
+	<TMPL_ELSE>
+	<div class="dk-hinweis"><TMPL_VAR lblPasswortUnbekannt></div>
+	</TMPL_IF>
+
+	<hr class="dk-trenner">
+
+	<form action="index.cgi" method="post">
+		<input type="hidden" name="aktion" value="neu_einrichten">
+		<p><TMPL_VAR lblNeueinrichtenText></p>
+		<button class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" type="submit"><TMPL_VAR lblBNeueinrichten></button>
+	</form>
+</div>
+
+<div class="dk-karte">
+	<h3><TMPL_VAR lblContainerTitel></h3>
+	<TMPL_IF CONTAINERLISTE>
+	<table class="dk-tabelle">
+		<tr><th><TMPL_VAR lblTName></th><th><TMPL_VAR lblTAbbild></th><th><TMPL_VAR lblTZustand></th></tr>
+		<TMPL_LOOP CONTAINERLISTE>
+		<tr>
+			<td class="dk-mono"><TMPL_VAR NAME></td>
+			<td class="dk-mono"><TMPL_VAR ABBILD></td>
+			<td class="<TMPL_IF LAEUFT>dk-an<TMPL_ELSE>dk-aus</TMPL_IF>"><TMPL_VAR ZUSTAND></td>
+		</tr>
+		</TMPL_LOOP>
+	</table>
+	<TMPL_ELSE>
+	<div class="dk-hinweis"><TMPL_VAR lblKeineContainer></div>
+	</TMPL_IF>
+</div>
+
+<div class="dk-karte">
+	<h3><TMPL_VAR lblMqttTitel></h3>
+	<p><TMPL_VAR lblMqttText></p>
+</div>

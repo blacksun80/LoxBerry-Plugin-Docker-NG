@@ -1,0 +1,86 @@
+name: Release / Prerelease
+
+# Manuell ausloesen: Actions-Tab -> "Release / Prerelease" -> Run workflow
+# -> Version + Kanal (release/prerelease) angeben.
+#
+# Was passiert:
+#   1. plugin.cfg VERSION auf die neue Version setzen.
+#   2. release.cfg ODER prerelease.cfg aktualisieren (VERSION, ARCHIVEURL=Tag-Zip, INFOURL).
+#   3. Aenderungen nach master committen + pushen.
+#   4. Tag "Docker-NG-V<version>" + GitHub-Release erzeugen
+#      (Prerelease-Flag bei Kanal=prerelease).
+#
+# Idempotent: existiert fuer die Version schon ein Release, wird es inkl. Tag
+# entfernt und auf dem aktuellen master neu erzeugt. Ein erneuter Lauf mit
+# derselben Version "aktualisiert" das Release also, statt zu scheitern.
+#
+# Uebernommen aus LoxBerry-Plugin-UniFi-Controller-NG, nur den Tag-Praefix
+# angepasst - derselbe Mechanismus fuer beide Plugins.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version zweistellig (z.B. 1.0 oder 1.1)"
+        required: true
+      channel:
+        description: "Kanal"
+        required: true
+        type: choice
+        default: prerelease
+        options:
+          - release
+          - prerelease
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version + cfg aktualisieren
+        run: |
+          set -e
+          V="${{ inputs.version }}"
+          CH="${{ inputs.channel }}"
+          REPO="${{ github.repository }}"
+          TAG="Docker-NG-V$V"
+          ZIP="https://github.com/$REPO/archive/refs/tags/$TAG.zip"
+          INFO="https://github.com/$REPO/releases/tag/$TAG"
+
+          # Plugin-Version
+          sed -i "s/^VERSION=.*/VERSION=$V/" plugin.cfg
+
+          # Kanal-cfg (release.cfg oder prerelease.cfg)
+          CFG="$CH.cfg"
+          sed -i \
+            -e "s/^VERSION=.*/VERSION=$V/" \
+            -e "s#^ARCHIVEURL=.*#ARCHIVEURL=$ZIP#" \
+            -e "s#^INFOURL=.*#INFOURL=$INFO#" \
+            "$CFG"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "$CH $V" || echo "Keine Aenderung zu committen."
+          git push
+
+      - name: Tag + GitHub-Release erzeugen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          V="${{ inputs.version }}"
+          CH="${{ inputs.channel }}"
+          TAG="Docker-NG-V$V"
+          PRE=""
+          [ "$CH" = "prerelease" ] && PRE="--prerelease"
+
+          # Existiert das Release/der Tag schon, entfernen (inkl. Tag), damit es
+          # auf dem gerade gepushten master neu erzeugt werden kann.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --cleanup-tag --yes
+          fi
+
+          gh release create "$TAG" --target master --title "$TAG" --notes "$CH $V" $PRE

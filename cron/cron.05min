@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+# cron/cron.05min - alle fuenf Minuten von LoxBerrys Cron-System ausgefuehrt.
+# Installiert nach $LBHOMEDIR/system/cron/cron.05min/<NAME>, laeuft als
+# Benutzer loxberry.
+#
+# Veroeffentlicht den Containerzustand per MQTT (retained), damit er sich in
+# Loxone Config ueber das MQTT-Gateway einbinden laesst. Kein eigener
+# Dauerprozess: LoxBerry::IO baut fuer jeden Lauf eine kurze Verbindung zum
+# konfigurierten Broker auf und beendet sie danach wieder.
+#
+# Themen:
+#   docker/ok         1 = Docker ist vorhanden UND ansprechbar
+#   docker/gesamt     Anzahl Container
+#   docker/laeuft     davon in Betrieb
+#   docker/gestoppt   davon gestoppt
+#   docker/portainer  1 = Portainer-Container laeuft
+#   docker/container/<Name>  1 = dieser Container laeuft (je Container)
+#
+# Bei OK=0 werden nur docker/ok und docker/portainer aktualisiert - die
+# Container-Zahlen blieben sonst faelschlich bei 0 haengen, obwohl in
+# Wahrheit nur die Abfrage fehlschlaegt (z.B. Rechteproblem direkt nach der
+# Installation, siehe DockerLib::docker_zustand). Der zuletzt bekannte,
+# retained Stand bleibt dann stehen, statt durch eine falsche Null ersetzt
+# zu werden.
+
+use strict;
+use warnings;
+use LoxBerry::System;
+use LoxBerry::IO;
+
+# DockerLib.pm liegt in bin/, das Cron-System ruft dieses Skript ohne '-I'
+# auf. Anders als bei der CGI (webfrontend/htmlauth/plugins/dockerng/...) hilft
+# hier kein $lbpbindir: LoxBerry::System leitet den Pluginordner aus dem Pfad
+# von $0 ab, und dessen Muster kennt webfrontend/, templates/, log/, data/,
+# config/, bin/ und system/daemons/ jeweils unter plugins/ - nicht aber
+# system/cron/cron.05min/, wohin dieses Skript installiert wird. $lbpbindir
+# bleibt dort also leer.
+#
+# FOLDER (hier "dockerng") ist die eingefrorene Identitaet des Plugins und darf
+# laut LoxBerry-Konvention in Skripten hartkodiert werden - sie aendert sich
+# im Normalbetrieb nie.
+BEGIN { push @INC, ($ENV{LBHOMEDIR} || '/opt/loxberry') . '/bin/plugins/dockerng'; }
+
+use DockerLib qw(docker_zustand docker_zaehlung docker_portainer_laeuft docker_config_read docker_log);
+
+my ($ok, $grund, $grundtext) = docker_zustand();
+LoxBerry::IO::mqtt_retain('docker/ok', $ok ? 1 : 0);
+
+if (!$ok) {
+    # Nur bei einer Aenderung protokollieren, nicht bei jedem Lauf - sonst
+    # waechst das Protokoll ungebremst, solange ein Zustand andauert (z.B.
+    # Docker dauerhaft nicht erreichbar).
+    my $p = DockerLib::docker_paths();
+    my $markerdatei = "$p->{logdir}/.letzter_grund";
+    my $vorheriger_grund = '';
+    if (open(my $fh, '<', $markerdatei)) { local $/; $vorheriger_grund = <$fh> // ''; close($fh); }
+    if ($grund ne $vorheriger_grund) {
+        docker_log()->WARN("MQTT-Meldung pausiert: $grundtext");
+        if (open(my $fh, '>', $markerdatei)) { print {$fh} $grund; close($fh); }
+    }
+    LoxBerry::IO::mqtt_retain('docker/portainer', 0);
+    exit 0;
+}
+
+my $z   = docker_zaehlung();
+my $cfg = docker_config_read();
+
+LoxBerry::IO::mqtt_retain('docker/gesamt', $z->{gesamt});
+LoxBerry::IO::mqtt_retain('docker/laeuft', $z->{laeuft});
+LoxBerry::IO::mqtt_retain('docker/gestoppt', $z->{gestoppt});
+LoxBerry::IO::mqtt_retain('docker/portainer', docker_portainer_laeuft($cfg->{portainer_name}) ? 1 : 0);
+
+foreach my $c (@{$z->{liste}}) {
+    (my $thema = $c->{name}) =~ s/[^A-Za-z0-9_]/_/g;
+    LoxBerry::IO::mqtt_retain("docker/container/$thema", $c->{laeuft});
+}
+
+exit 0;
