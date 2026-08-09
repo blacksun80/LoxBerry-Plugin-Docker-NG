@@ -122,6 +122,39 @@ then
 	exit 2
 fi
 
+# ---------------------------------------------------------------------------
+# Apache neu laden, damit die Gruppenmitgliedschaft sofort wirkt
+#
+# usermod fuegte loxberry weiter oben der Gruppe docker hinzu (entweder gerade
+# eben oder bei einer frueheren Installation). Linux liest Gruppenmitglied-
+# schaften fuer bereits laufende Prozesse nicht neu ein - der Docker-Socket
+# waere fuer den Webserver erst nach einem Neustart erreichbar. Bislang
+# stand das nur als Hinweistext in der Oberflaeche ("nicht ansprechbar").
+#
+# 'systemctl reload apache2' statt eines vollen Neustarts: der Masterprozess
+# bleibt bestehen (laufende Verbindungen werden zu Ende bedient - unter
+# anderem die gerade angezeigte Installationsausgabe, die ueber denselben
+# Apache laeuft), aber neu geforkte Worker-Prozesse loesen ihre Gruppen-
+# mitgliedschaft frisch auf. Ein voller 'systemctl restart apache2' waere
+# der falsche Hebel gewesen: das reisst die Installationsseite mitten in der
+# Anzeige ab. REBOOT=true in plugin.cfg waere die noch groebere Variante -
+# das startete den kompletten LoxBerry neu, nicht nur Apache.
+#
+# Empirisch geprueft (nicht nur angenommen): ein frisch installiertes System,
+# bei dem 'nicht ansprechbar' auftrat, zeigte nach genau diesem Reload sofort
+# den korrekten Zustand - der Apache-Masterprozess blieb dabei nachweislich
+# derselbe (unveraenderte PID), nur die Worker-Prozesse waren neu.
+if command -v systemctl >/dev/null 2>&1
+then
+	if systemctl reload apache2 2>/dev/null
+	then
+		echo "<OK> Apache neu geladen - der Webserver erreicht den Docker-Socket ohne Neustart."
+	else
+		echo "<WARNING> Apache liess sich nicht neu laden. Falls die Oberflaeche 'nicht"
+		echo "<WARNING> ansprechbar' meldet: sudo systemctl restart apache2"
+	fi
+fi
+
 echo "<OK> Docker and Portainer container are up and running."
 
 # Exit with Status 0
