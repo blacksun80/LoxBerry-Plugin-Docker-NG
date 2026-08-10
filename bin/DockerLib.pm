@@ -235,6 +235,31 @@ sub docker_portainer_laeuft {
     return 0;
 }
 
+# ---------------- Portbelegung ----------------
+#
+# Portainers Standardport 9000 ist nicht exklusiv - z.B. AudioServer4Home
+# (sonn-core, network_mode: host) hoert selbst auf 9000. 'docker run -p 9000:9000'
+# scheitert dann mit 'address already in use', und bislang brach die gesamte
+# Portainer-Einrichtung darueber ab (bestaetigt im LoxBerry-Forum: die
+# Installation schlaegt genau dann fehl, wenn AudioServer4Home bereits laeuft -
+# ohne es installiert sich Docker NG sauber). Ein Portkonflikt ist kein Grund,
+# die Einrichtung abzubrechen - ein freier Port tut es genauso.
+sub _port_frei {
+    my ($port) = @_;
+    my ($belegt) = _ausfuehren("ss -Htln sport = :$port");
+    return (scalar(@$belegt) == 0) ? 1 : 0;
+}
+
+# Sucht ab $start aufwaerts den ersten freien Port (max. 50 Versuche - mehr
+# deutet auf ein grundsaetzliches Problem hin, das ein Ausweichen nicht loest).
+sub _freien_port_finden {
+    my ($start) = @_;
+    for my $kandidat ($start .. $start + 49) {
+        return $kandidat if (_port_frei($kandidat));
+    }
+    return $start;
+}
+
 # ---------------- Portainer einrichten ----------------
 #
 # Eine einzige Funktion fuer zwei Aufrufer: postroot.sh bei der Installation
@@ -287,6 +312,29 @@ sub docker_portainer_einrichten {
         docker_log()->INF('Vorhandener Container entfernt.');
     }
 
+    # Portpruefung ERST NACH dem Entfernen des alten Containers: hielt
+    # Portainer selbst den Port (Normalfall bei einem Neuaufbau), ist er jetzt
+    # frei und wuerde sonst faelschlich als 'belegt' gelten.
+    if (!_port_frei($port)) {
+        my $ausweich = _freien_port_finden($port + 1);
+        docker_log()->WARN("Port $port ist belegt (vermutlich ein anderer Dienst mit "
+            . "eigenem Netzwerk, z.B. AudioServer4Home) - weiche auf Port $ausweich aus.");
+        $port = $ausweich;
+        $cfg->{portainer_port} = $port;
+    }
+
+    # Der HTTPS-Zusatzport ist ein Bonus, kein Muss - '--http-enabled' macht
+    # Portainer bereits ueber $port vollstaendig erreichbar. Ist 9443 belegt,
+    # wird die Zuordnung einfach weggelassen statt die ganze Einrichtung
+    # daran scheitern zu lassen.
+    my $https_zuordnung = ' -p=9443:9443';
+    if (!_port_frei(9443)) {
+        docker_log()->WARN('Port 9443 ist belegt - Portainer bleibt ohne den optionalen '
+            . 'HTTPS-Zusatzport erreichbar, der normale Zugang ueber Port '
+            . $port . ' funktioniert davon unabhaengig.');
+        $https_zuordnung = '';
+    }
+
     my (undef, $pullfehler, $pullcode) = _ausfuehren("docker pull $PORTAINER_IMAGE");
     if ($pullcode != 0) {
         docker_log()->ERR("Abbild liess sich nicht laden: $pullfehler");
@@ -321,7 +369,7 @@ sub docker_portainer_einrichten {
         . ' --volume=/var/run/docker.sock:/var/run/docker.sock'
         . ' --volume=/opt/portainer:/data'
         . " --volume=$pwdatei:/run/portainer_admin_password:ro"
-        . " -p=$port:9000 -p=9443:9443"
+        . " -p=$port:9000$https_zuordnung"
         . " --name=$qname --restart=unless-stopped --detach=true"
         . " $PORTAINER_IMAGE --http-enabled --admin-password-file=/run/portainer_admin_password";
     my (undef, $runfehler, $runcode) = _ausfuehren($run);

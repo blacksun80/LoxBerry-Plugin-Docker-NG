@@ -3,41 +3,89 @@
 # LoxBerry uninstall script for the Docker plugin.
 #
 # This file lives in  uninstall/uninstall  and is executed AS ROOT at the
-# very end of the plugin uninstallation (NOT on update). Its job is to undo
-# everything that postroot.sh set up.
+# very end of the plugin uninstallation (NOT on update).
 #
-# FULL REMOVAL: Because Docker is the base platform, this removes the whole
-# Docker stack - the Docker engine, the Portainer container, the Docker apt
-# repository/key and the docker group. That also destroys ALL OTHER
-# containers/images on the system (e.g. a UniFi controller running in
-# Docker). This is intended: uninstalling the Docker plugin means the whole
-# Docker stack goes away. Uninstall your Docker-based apps first, this
-# plugin last.
+# WICHTIG - warum hier NICHT mehr pauschal die Docker-Engine entfernt wird:
+#
+# Frueher hat dieses Skript kompromisslos "apt-get purge docker-ce
+# docker-ce-cli containerd.io ..." plus "rm -rf /var/lib/docker" ausgefuehrt,
+# in der Annahme, Docker NG sei der alleinige Eigentuemer von Docker. Diese
+# Annahme ist falsch: andere LoxBerry-Plugins (AudioServer4Home, UniFi
+# Controller NG, ...) installieren Docker ebenfalls selbst, wenn es fehlt,
+# und betreiben eigene Container darin.
+#
+# Der Schaden entstand vor allem bei einer FEHLGESCHLAGENEN Installation:
+# bricht postroot.sh mit "exit 2" ab (z.B. weil Portainers Port belegt ist),
+# raeumt LoxBerry auf, indem es genau dieses Uninstall-Skript ausfuehrt.
+# Damit riss eine gescheiterte Docker-NG-Installation die Docker-Engine
+# mitsamt ALLEN fremden Containern eines anderen, voellig intakten Plugins
+# mit weg. Genau das wurde im LoxBerry-Forum berichtet ("the installation
+# killed the audioserver plugin too") und ist hier nachgestellt worden.
+#
+# Neue Regel: Docker NG entfernt nur, was Docker NG gehoert (der Portainer-
+# Container und dessen Daten). Die Docker-Engine bleibt stehen, sobald noch
+# irgendein anderer Container existiert oder ein anderes Plugin sie braucht -
+# eine ungenutzte Docker-Installation schadet niemandem, eine faelschlich
+# entfernte dagegen zerstoert fremde Dienste.
 #
 # For logging print to STDOUT using <INFO>/<OK>/<WARNING>/<ERROR> tags.
 
-echo "<INFO> Docker plugin uninstall - starting full removal of Docker and Portainer."
+echo "<INFO> Docker NG uninstall - removing Portainer."
 
-# --- 1. Remove the Portainer container (created by postroot.sh) ---
-if [ -x /usr/bin/docker ]
+DOCKER_BIN=$(command -v docker 2>/dev/null)
+
+# --- 1. Remove the Portainer container and its data (that IS ours) ---
+if [ -n "$DOCKER_BIN" ]
 then
 	echo "<INFO> Removing Portainer container..."
-	docker rm --force portainer > /dev/null 2>&1
+	"$DOCKER_BIN" rm --force portainer > /dev/null 2>&1
+fi
+rm -rf /opt/portainer
+
+# --- 2. Decide whether the Docker engine may be removed at all ---
+#
+# Drei Gruende, die Engine stehen zu lassen. Jeder fuer sich genuegt.
+FREMDE_CONTAINER=0
+ANDERE_PLUGINS=0
+
+if [ -n "$DOCKER_BIN" ]
+then
+	# Container, die nicht uns gehoeren (Portainer ist oben schon weg).
+	FREMDE_CONTAINER=$("$DOCKER_BIN" ps -a --quiet 2>/dev/null | wc -l)
 fi
 
-# --- 2. Stop and disable the Docker daemon ---
-echo "<INFO> Stopping Docker service..."
+# Andere installierte LoxBerry-Plugins, die bekanntermassen Docker nutzen.
+# Bewusst eine Positivliste bekannter Ordnernamen statt einer Suche nach
+# "docker" quer durchs Dateisystem: das hier laeuft als root und loescht
+# Pakete - eine Fehleinschaetzung in die eine Richtung laesst nur eine
+# ungenutzte Engine stehen, in die andere Richtung zerstoert sie fremde
+# Dienste.
+for PLUGINDIR in audioserver4home unificontrollerng unifi-controller-ng
+do
+	if [ -d "$LBHOMEDIR/config/plugins/$PLUGINDIR" ] || [ -d "$LBHOMEDIR/data/plugins/$PLUGINDIR" ]
+	then
+		echo "<INFO> Weiteres Docker-Plugin gefunden: $PLUGINDIR"
+		ANDERE_PLUGINS=1
+	fi
+done
+
+if [ "$FREMDE_CONTAINER" -gt 0 ] || [ "$ANDERE_PLUGINS" -eq 1 ]
+then
+	echo "<OK> Portainer wurde entfernt. Die Docker-Engine bleibt bestehen,"
+	echo "<OK> weil sie noch von anderen Containern oder Plugins genutzt wird."
+	exit 0
+fi
+
+# --- 3. Nothing else uses Docker - remove the engine we installed ---
+echo "<INFO> Kein anderer Docker-Nutzer gefunden - entferne die Docker-Engine."
+
 systemctl stop docker.socket > /dev/null 2>&1
 systemctl stop docker > /dev/null 2>&1
 systemctl disable docker > /dev/null 2>&1
 
-# --- 3. Purge the Docker engine packages (installed via get.docker.com) ---
-# Only purge packages that are actually installed. On older LoxBerry/Debian
-# versions (LoxBerry 3 is not on Trixie) some of these - e.g. the buildx or
-# compose plugins - may not exist. Passing an unknown package name to
-# "apt-get purge" aborts the whole command and removes nothing, so we filter
-# down to the installed set first via dpkg-query.
-echo "<INFO> Removing Docker engine packages..."
+# Only purge packages that are actually installed. Passing an unknown package
+# name to "apt-get purge" aborts the whole command and removes nothing, so we
+# filter down to the installed set first via dpkg-query.
 export DEBIAN_FRONTEND=noninteractive
 DOCKER_PKGS=$(dpkg-query -W -f='${Package}\n' docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-model-plugin docker-ce-rootless-extras 2>/dev/null)
 if [ -n "$DOCKER_PKGS" ]
@@ -46,25 +94,17 @@ then
 fi
 apt-get autoremove -y --purge > /dev/null 2>&1
 
-# --- 4. Remove Docker data and the Portainer volume ---
-echo "<INFO> Removing Docker data directories and Portainer volume..."
 rm -rf /var/lib/docker
 rm -rf /var/lib/containerd
-rm -rf /opt/portainer
 
-# --- 5. Remove the Docker apt repository and GPG key ---
-echo "<INFO> Removing Docker apt repository and key..."
 rm -f /etc/apt/sources.list.d/docker.list
 rm -f /etc/apt/keyrings/docker.asc
 rm -f /etc/apt/keyrings/docker.gpg
 rm -f /usr/share/keyrings/docker-archive-keyring.gpg
 
-# --- 6. Remove the docker group and loxberry's membership ---
-echo "<INFO> Removing docker group membership..."
 gpasswd -d loxberry docker > /dev/null 2>&1
 groupdel docker > /dev/null 2>&1
 
-# --- 7. Refresh apt so the removed repo disappears from the cache ---
 apt-get update > /dev/null 2>&1
 
 echo "<OK> Docker, Portainer and all related data have been removed."
