@@ -130,11 +130,39 @@ sub docker_config_write {
 
     $cfg->{$_} = $neu->{$_} for (keys %$neu);
     $json->{jsonobj} = $cfg;
-    my $ok = $json->write();
+    $json->write();
 
     # Nur fuer loxberry lesbar - dort steht das Portainer-Passwort im Klartext.
     chmod 0600, $p->{config};
-    return $ok ? 1 : 0;
+
+    # Der Rueckgabewert von LoxBerry::JSON->write() taugt NICHT als
+    # Erfolgspruefung: die Methode steigt mit einem leeren 'return' aus, wenn
+    # der neue Inhalt mit dem bestehenden identisch ist ("JSON are equal -
+    # nothing to do", JSON.pm um Zeile 181). Das ist Erfolg, sah hier aber wie
+    # ein Fehlschlag aus - beim Neuaufbau von Portainer ohne Aenderung
+    # (gleiches Passwort, gleicher Port, gleicher Name) meldete das Plugin
+    # daraufhin "das Passwort liess sich NICHT speichern, es ist verloren",
+    # obwohl es unveraendert und korrekt in der Datei stand.
+    #
+    # Geprueft wird deshalb das Ergebnis statt des Rueckgabewerts: steht
+    # hinterher in der Datei, was hineingeschrieben werden sollte?
+    #
+    # Das Schreibobjekt muss dafuer zuerst weg: es haelt wegen lockexclusive
+    # eine exklusive Sperre auf der Datei, an der die Kontrolle sonst
+    # scheitert ("Could not get lock after 3 seconds"). undef gibt das
+    # Dateihandle und damit die Sperre frei.
+    undef $json;
+
+    my $kontrolle = LoxBerry::JSON->new();
+    my $geschrieben = $kontrolle->open(filename => $p->{config}, readonly => 1, locktimeout => 3);
+    return 0 if (!defined $geschrieben || ref($geschrieben) ne 'HASH');
+
+    foreach my $schluessel (keys %$neu) {
+        my $soll = defined $neu->{$schluessel} ? $neu->{$schluessel} : '';
+        my $ist  = defined $geschrieben->{$schluessel} ? $geschrieben->{$schluessel} : '';
+        return 0 if ($soll ne $ist);
+    }
+    return 1;
 }
 
 # Zeichen ohne 0/O/1/l/I - beim Ablesen vom Bildschirm sonst verwechselbar,
