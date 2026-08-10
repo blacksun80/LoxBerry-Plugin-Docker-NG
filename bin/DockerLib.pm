@@ -31,6 +31,22 @@ our @EXPORT_OK = qw(
 
 our $PORTAINER_IMAGE = 'portainer/portainer-ce:latest';
 
+# Eigener Containername und eigenes Datenverzeichnis - bewusst NICHT das
+# schlichte "portainer" / "/opt/portainer".
+#
+# Das urspruengliche Docker-Plugin von Michael Miklis startet seinen Portainer
+# unter genau diesen beiden Namen. Docker NG ist ausdruecklich so gebaut, dass
+# es neben dem Original installiert sein kann - bei gleichen Namen griffen
+# beide nach demselben Container und demselben Datenverzeichnis. Wer beide
+# installiert hat und Docker NG wieder entfernt, verloere sonst den Portainer
+# des anderen Plugins samt aller darin angelegten Benutzerkonten.
+#
+# Mit eigenen Namen ist der Besitz eindeutig: was "portainer-ng" heisst und in
+# /opt/portainer-ng liegt, gehoert diesem Plugin und darf bei der
+# Deinstallation restlos weg. Keine Ratespiele darueber, wem was gehoert.
+our $PORTAINER_NAME_STD = 'portainer-ng';
+our $PORTAINER_DATA     = '/opt/portainer-ng';
+
 # FOLDER aus plugin.cfg - die eingefrorene Identitaet des Plugins, darf laut
 # LoxBerry-Konvention hartkodiert werden (aendert sich im Normalbetrieb nie).
 #
@@ -99,7 +115,7 @@ sub docker_config_read {
     $cfg = {} if (!defined $cfg || ref($cfg) ne 'HASH');
 
     $cfg->{portainer_port} = 9000 if (!$cfg->{portainer_port} || $cfg->{portainer_port} !~ /^\d+$/);
-    $cfg->{portainer_name} = 'portainer'
+    $cfg->{portainer_name} = $PORTAINER_NAME_STD
         if (!defined $cfg->{portainer_name} || $cfg->{portainer_name} !~ /^[A-Za-z0-9_.-]{1,64}$/);
     $cfg->{portainer_password} = '' if (!defined $cfg->{portainer_password});
     return $cfg;
@@ -270,7 +286,7 @@ sub _freien_port_finden {
 # Das Administrator-Passwort setzt Portainer nur beim ALLERERSTEN Start einer
 # Instanz ohne bestehendes Konto - --admin-password-file wird bei jedem
 # spaeteren Start stillschweigend ignoriert. Ein bestehender Container wird
-# deshalb nur bei $force entfernt (Datenverzeichnis /opt/portainer bleibt
+# deshalb nur bei $force entfernt (das Datenverzeichnis bleibt
 # davon unberuehrt, das Konto darin ueberlebt die Neuerstellung des
 # Containers und der neue Aufruf hat dann ohnehin keine Wirkung mehr).
 #
@@ -299,7 +315,7 @@ sub docker_portainer_einrichten {
     docker_log()->INF("Richte Portainer ein (force=$force, name=$name, port=$port).");
 
     # Vorhandenen Container entfernen, egal in welchem Zustand (laeuft,
-    # gestoppt, falsche Version). /opt/portainer bleibt unberuehrt - das ist
+    # gestoppt, falsche Version). Das Datenverzeichnis bleibt unberuehrt - das ist
     # ein Bind-Mount auf ein Host-Verzeichnis, kein vom Container verwaltetes
     # Volume, und geht beim Entfernen des Containers nicht verloren.
     my ($vorhanden) = _ausfuehren("docker ps -a --filter name=$qname -q");
@@ -367,7 +383,7 @@ sub docker_portainer_einrichten {
 
     my $run = 'docker run'
         . ' --volume=/var/run/docker.sock:/var/run/docker.sock'
-        . ' --volume=/opt/portainer:/data'
+        . " --volume=$PORTAINER_DATA:/data"
         . " --volume=$pwdatei:/run/portainer_admin_password:ro"
         . " -p=$port:9000$https_zuordnung"
         . " --name=$qname --restart=unless-stopped --detach=true"

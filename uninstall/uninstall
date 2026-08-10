@@ -59,14 +59,20 @@ echo "<INFO> Docker NG wird entfernt."
 
 DOCKER_BIN=$(command -v docker 2>/dev/null)
 
-# --- Portainer-Container entfernen (der gehoert uns) ---
+# --- Portainer-Container und -Daten entfernen ---
+#
+# Beides gehoert eindeutig diesem Plugin: Docker NG betreibt seinen Portainer
+# unter dem eigenen Namen "portainer-ng" mit dem eigenen Datenverzeichnis
+# /opt/portainer-ng. Das urspruengliche Docker-Plugin von Michael Miklis
+# verwendet "portainer" und /opt/portainer - beides wird hier nicht angefasst,
+# und beide Plugins koennen deshalb nebeneinander bestehen.
 #
 # Der Containername ist konfigurierbar; er steht in der Plugin-Konfiguration.
 # Faellt das Auslesen aus, wird der Standardname verwendet.
 PORTAINER_NAME=$(grep -o '"portainer_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
 	"$LBHOMEDIR/config/plugins/dockerng/dockerng.json" 2>/dev/null \
 	| head -1 | sed 's/.*"\([^"]*\)"$/\1/')
-[ -n "$PORTAINER_NAME" ] || PORTAINER_NAME="portainer"
+[ -n "$PORTAINER_NAME" ] || PORTAINER_NAME="portainer-ng"
 
 if [ -n "$DOCKER_BIN" ]
 then
@@ -77,23 +83,28 @@ else
 	echo "<INFO> Docker ist nicht vorhanden - kein Container zu entfernen."
 fi
 
-# --- Portainer-Daten entfernen (gehoeren ebenfalls uns) ---
-#
-# Hier liegen Portainers eigene Einstellungen und Benutzerkonten. Sie sind
-# ohne Portainer nutzlos, und das Verzeichnis wird ausschliesslich von diesem
-# Plugin angelegt.
-if [ -d /opt/portainer ]
+# Portainers Einstellungen und Benutzerkonten.
+if [ -d /opt/portainer-ng ]
 then
-	rm -rf /opt/portainer
+	rm -rf /opt/portainer-ng
 	echo "<OK> Portainer-Daten entfernt."
 fi
 
-# --- Die Docker-Engine bleibt bewusst bestehen ---
-echo "<INFO> Die Docker-Engine bleibt installiert - andere Plugins koennten"
-echo "<INFO> sie ebenfalls verwenden (z.B. AudioServer4Home)."
-echo "<INFO> Wer Docker wirklich vollstaendig entfernen will, prueft zuerst"
-echo "<INFO> mit 'docker ps -a', ob noch fremde Container vorhanden sind, und"
-echo "<INFO> fuehrt dann von Hand aus:"
+# --- Die Docker-Engine bleibt bestehen ---
+#
+# Ohne Erkennungsversuch, ob sie noch gebraucht wird: jede solche Pruefung
+# waere unvollstaendig. Eine Liste bekannter Docker-Plugins ist es ohnehin
+# (dass AudioServer4Home Docker mitbringt, wusste vorher niemand), aber auch
+# das Suchen nach Spuren traegt nicht weit genug - ein Plugin kann den
+# Docker-Socket direkt ansprechen, ohne je 'docker' aufzurufen, und ein
+# gerade nicht existierender Container hinterlaesst gar keine Spur.
+#
+# Eine ungenutzte Docker-Installation kostet nur Plattenplatz. Eine
+# faelschlich entfernte zerstoert fremde Dienste. Die Entscheidung faellt
+# deshalb der Anwender, der sein System kennt.
+echo "<INFO> Die Docker-Engine bleibt installiert, da sie von anderen Plugins"
+echo "<INFO> verwendet werden koennte. Wer sie entfernen moechte, fuehrt von"
+echo "<INFO> Hand aus:"
 echo "<INFO>   sudo apt-get purge docker-ce docker-ce-cli containerd.io"
 echo "<INFO>   sudo rm -rf /var/lib/docker /var/lib/containerd"
 
