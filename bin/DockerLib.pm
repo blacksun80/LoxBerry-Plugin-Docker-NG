@@ -394,20 +394,62 @@ sub docker_portainer_einrichten {
         $passwort = docker_password_neu();
     }
 
-    # Das Passwort landet NUR fluechtig auf der Platte, fuer den einen
-    # Moment, in dem der Docker-Daemon (als root) die Bind-Mount-Quelle liest.
-    # /tmp traegt sowohl von root (postroot.sh) als auch von loxberry (CGI)
-    # aus - der Daemon selbst liest als root ohnehin unabhaengig von den
-    # Dateirechten des Erstellers.
-    my $pwdatei = "/tmp/portainer_admin_password.$$";
-    if (!open(my $fh, '>', $pwdatei)) {
-        docker_log()->ERR("Temporaere Passwortdatei liess sich nicht anlegen: $!");
-        return (0, "Temporaere Passwortdatei liess sich nicht anlegen: $!");
-    } else {
-        chmod 0600, $pwdatei;
-        print {$fh} $passwort;
-        close($fh);
+    # Die Passwortdatei liegt DAUERHAFT im Datenverzeichnis - nicht in /tmp,
+    # und sie wird nach dem Start auch nicht mehr geloescht.
+    #
+    # Frueher lag sie unter /tmp/portainer_admin_password.<PID> und wurde
+    # gleich nach dem Start entfernt. Das war ein schwerer Fehler: die Datei
+    # ist Quelle eines Bind-Mounts, und der gehoert dauerhaft zur
+    # Container-Definition. Solange der Container durchlief, fiel es nicht
+    # auf - sobald er aber neu starten musste (Neustart des Docker-Dienstes,
+    # etwa weil ein anderes Plugin Docker-Pakete installiert, oder schlicht
+    # ein Reboot), wollte Docker den Mount wiederherstellen, fand die Quelle
+    # nicht und legte an ihrer Stelle ein VERZEICHNIS an. Portainer bekam
+    # damit ein Verzeichnis statt einer Datei und brach mit Rueckgabewert 127
+    # ab: der Container blieb tot zurueck.
+    #
+    # Nachgestellt: nach der Installation von AudioServer4Home stand
+    # portainer-ng auf "Exited (127)", waehrend Port 9000 voellig frei war -
+    # es war also nie ein Portkonflikt, sondern immer diese fehlende Datei.
+    #
+    # Sicherheitlich ist das unbedenklich: dasselbe Passwort steht ohnehin in
+    # dockerng.json. Die Datei bekommt 0600 und liegt in einem Verzeichnis,
+    # das bei der Deinstallation mitentfernt wird.
+    make_path($PORTAINER_DATA) if (!-d $PORTAINER_DATA);
+
+    # Eigentuemer auf loxberry setzen, solange wir root sind (Installation).
+    # Sonst gehoert das Verzeichnis root, und die Oberflaeche - die als
+    # loxberry laeuft - koennte die Passwortdatei bei "Portainer neu
+    # einrichten" nicht schreiben ("Inappropriate ioctl for device", genau so
+    # aufgetreten). Portainer selbst laeuft im Container als root und schreibt
+    # unabhaengig davon weiter in /data.
+    if ($> == 0) {
+        my (undef, undef, $uid, $gid) = getpwnam('loxberry');
+        chown($uid, $gid, $PORTAINER_DATA) if (defined $uid);
     }
+
+    my $pwdatei = "$PORTAINER_DATA/.admin_password";
+
+    # Nur schreiben, wenn noetig. Steht das richtige Passwort schon drin,
+    # bleibt die Datei unangetastet - das vermeidet einen Schreibversuch in
+    # Faellen, in denen die Rechte nicht passen, obwohl gar nichts zu tun ist.
+    my $vorhanden = '';
+    if (open(my $lesen, '<', $pwdatei)) {
+        local $/;
+        $vorhanden = <$lesen> // '';
+        close($lesen);
+    }
+
+    if ($vorhanden ne $passwort) {
+        if (!open(my $fh, '>', $pwdatei)) {
+            docker_log()->ERR("Passwortdatei liess sich nicht anlegen: $!");
+            return (0, "Passwortdatei liess sich nicht anlegen: $!");
+        } else {
+            print {$fh} $passwort;
+            close($fh);
+        }
+    }
+    chmod 0600, $pwdatei;
 
     my $run = 'docker run'
         . ' --volume=/var/run/docker.sock:/var/run/docker.sock'
@@ -418,10 +460,13 @@ sub docker_portainer_einrichten {
         . " $PORTAINER_IMAGE --http-enabled --admin-password-file=/run/portainer_admin_password";
     my (undef, $runfehler, $runcode) = _ausfuehren($run);
 
-    # Das Bootstrap-Passwort wird nur beim allerersten Start OHNE bestehendes
-    # Konto ausgewertet. Kurz warten, bis Portainer antwortet, dann erst die
-    # Datei entfernen - sonst besteht ein winziges Zeitfenster, in dem der
-    # Container zwar schon laeuft, das Passwort aber noch nicht gelesen hat.
+    # Warten, bis Portainer antwortet - das Bootstrap-Passwort wird nur beim
+    # allerersten Start ohne bestehendes Konto ausgewertet, und der Aufrufer
+    # soll erst zurueckkehren, wenn der Dienst wirklich erreichbar ist.
+    #
+    # Die Passwortdatei wird hier NICHT geloescht: sie ist Quelle eines
+    # Bind-Mounts und muss existieren, solange der Container existiert (siehe
+    # ausfuehrliche Begruendung weiter oben).
     if ($runcode == 0) {
         for (1 .. 10) {
             my (undef, undef, $code) = _ausfuehren("curl -s -o /dev/null -m 2 http://127.0.0.1:$port/");
@@ -429,7 +474,6 @@ sub docker_portainer_einrichten {
             sleep(1);
         }
     }
-    unlink($pwdatei);
 
     if ($runcode != 0) {
         docker_log()->ERR("Portainer liess sich nicht starten: $runfehler");
