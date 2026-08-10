@@ -102,11 +102,23 @@ fi
 # Eine ungenutzte Docker-Installation kostet nur Plattenplatz. Eine
 # faelschlich entfernte zerstoert fremde Dienste. Die Entscheidung faellt
 # deshalb der Anwender, der sein System kennt.
+# Der Ablageort wird bei Docker erfragt statt fest angenommen: /var/lib/docker
+# ist zwar die Vorgabe, laesst sich aber ueber /etc/docker/daemon.json
+# ("data-root") oder ein dockerd-Flag verlegen. Ein fest eingetragener Pfad
+# waere dann ein falscher Rat. Antwortet Docker nicht (Daemon gestoppt oder
+# schon entfernt), bleibt es bei der Vorgabe.
+DOCKER_ROOT=""
+if [ -n "$DOCKER_BIN" ]
+then
+	DOCKER_ROOT=$("$DOCKER_BIN" info --format '{{.DockerRootDir}}' 2>/dev/null)
+fi
+[ -n "$DOCKER_ROOT" ] || DOCKER_ROOT="/var/lib/docker"
+
 echo "<INFO> Die Docker-Engine bleibt installiert, da sie von anderen Plugins"
 echo "<INFO> verwendet werden koennte. Wer sie entfernen moechte, fuehrt von"
 echo "<INFO> Hand aus:"
 echo "<INFO>   sudo apt-get purge docker-ce docker-ce-cli containerd.io"
-echo "<INFO>   sudo rm -rf /var/lib/docker /var/lib/containerd"
+echo "<INFO>   sudo rm -rf $DOCKER_ROOT /var/lib/containerd"
 
 echo "<OK> Docker NG wurde entfernt."
 
