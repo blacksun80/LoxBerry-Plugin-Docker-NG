@@ -59,6 +59,27 @@ my $z = docker_zaehlung();
 my $cfg = docker_config_read();
 my $portainer_laeuft = docker_portainer_laeuft($cfg->{portainer_name});
 
+# Adresse der Portainer-Oberflaeche.
+#
+# Der Port MUSS aus der Konfiguration kommen: laeuft auf 9000 bereits ein
+# anderer Dienst (z.B. AudioServer4Home), weicht die Einrichtung auf den
+# naechsten freien Port aus. Vorher stand hier eine Weiterleitungsseite
+# (forward.html) mit fest eingetragenem Port 9000 - der Knopf landete dann
+# beim fremden Dienst statt bei Portainer, mit einer nichtssagenden
+# Fehlermeldung als Ergebnis.
+#
+# Rechnername aus HTTP_HOST, damit der Aufruf ueber denselben Namen laeuft,
+# ueber den der Anwender die LoxBerry-Oberflaeche gerade erreicht; ein
+# eventuell enthaltener Port wird abgeschnitten.
+#
+# Protokoll fest "http": Portainer wird mit --http-enabled auf diesem Port
+# ausschliesslich per HTTP veroeffentlicht. Wuerde man das Protokoll der
+# LoxBerry-Oberflaeche uebernehmen, landete man bei einem per HTTPS
+# aufgerufenen LoxBerry auf https://host:PORT, wo nichts lauscht.
+my $portainer_host = $ENV{HTTP_HOST} // 'localhost';
+$portainer_host =~ s/:.*$//;
+my $portainer_url = 'http://' . $portainer_host . ':' . $cfg->{portainer_port};
+
 my @containerliste;
 foreach my $c (@{$z->{liste}}) {
     push @containerliste, {
@@ -124,6 +145,8 @@ $template->param(
     LAEUFT           => $z->{laeuft},
     GESTOPPT         => $z->{gestoppt},
     PORTAINER_LAEUFT => $portainer_laeuft,
+    PORTAINER_URL    => $portainer_url,
+    PORTAINER_PORT   => $cfg->{portainer_port},
     PASSWORT         => $cfg->{portainer_password},
     CONTAINERLISTE   => \@containerliste,
     MELDUNG          => $meldung,
