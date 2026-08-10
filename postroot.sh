@@ -90,7 +90,22 @@ then
 	# install docker
 	curl -fsSL https://get.docker.com -o get-docker.sh
 	sh get-docker.sh
+fi
+
+# Gruppenzuordnung IMMER pruefen, nicht nur bei einer Neuinstallation.
+#
+# Stand bisher INNERHALB des Installationszweigs oben. War Docker schon da -
+# z.B. weil ein anderes Docker-Plugin (AudioServer4Home, UniFi Controller NG,
+# ...) es zuerst installiert hat, was auf einem System mit mehreren
+# Docker-Plugins der Normalfall ist -, wurde loxberry NIE der Gruppe docker
+# hinzugefuegt. Die Oberflaeche meldete dann dauerhaft "nicht ansprechbar",
+# und keine Neuinstallation haette daran etwas geaendert, weil der Zweig ja
+# gerade deshalb uebersprungen wird.
+if getent group docker >/dev/null 2>&1
+then
 	usermod -aG docker loxberry
+else
+	echo "<FAIL> Die Gruppe docker gibt es nicht - ist Docker wirklich eingerichtet?"
 fi
 
 # ---------------------------------------------------------------------------
