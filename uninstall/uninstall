@@ -14,13 +14,23 @@
 # Controller NG, ...) installieren Docker ebenfalls selbst, wenn es fehlt,
 # und betreiben eigene Container darin.
 #
-# Der Schaden entstand vor allem bei einer FEHLGESCHLAGENEN Installation:
-# bricht postroot.sh mit "exit 2" ab (z.B. weil Portainers Port belegt ist),
-# raeumt LoxBerry auf, indem es genau dieses Uninstall-Skript ausfuehrt.
-# Damit riss eine gescheiterte Docker-NG-Installation die Docker-Engine
-# mitsamt ALLEN fremden Containern eines anderen, voellig intakten Plugins
-# mit weg. Genau das wurde im LoxBerry-Forum berichtet ("the installation
-# killed the audioserver plugin too") und ist hier nachgestellt worden.
+# Der Schaden entstand typischerweise im Nachgang einer FEHLGESCHLAGENEN
+# Installation. Nachgestellt auf einer Testmaschine mit laufendem
+# AudioServer4Home:
+#
+#   1. postroot.sh bricht mit "exit 2" ab, weil Portainers Port 9000 belegt
+#      ist (sonn-core laeuft mit network_mode: host und hoert selbst auf 9000).
+#   2. LoxBerry meldet "Installation cannot be continued" - zerstoert dabei
+#      aber nichts. Ein exit 2 fuehrt NICHT dazu, dass dieses Skript laeuft
+#      (plugininstall.pl, sub fail: raeumt nur Temp-Dateien auf und beendet).
+#   3. Das Plugin bleibt trotz Fehlschlag in der Pluginliste registriert -
+#      samt einsatzbereitem Uninstall-Skript.
+#   4. Der Anwender sieht ein kaputtes Plugin und deinstalliert es.
+#   5. ERST JETZT laeuft dieses Skript - und riss bislang die Docker-Engine
+#      mitsamt allen fremden Containern weg.
+#
+# Genau das wurde im LoxBerry-Forum berichtet ("the installation killed the
+# audioserver plugin too", gefolgt von "had to restore from a backup").
 #
 # Neue Regel: Docker NG entfernt nur, was Docker NG gehoert (der Portainer-
 # Container und dessen Daten). Die Docker-Engine bleibt stehen, sobald noch
