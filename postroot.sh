@@ -101,9 +101,22 @@ fi
 # hinzugefuegt. Die Oberflaeche meldete dann dauerhaft "nicht ansprechbar",
 # und keine Neuinstallation haette daran etwas geaendert, weil der Zweig ja
 # gerade deshalb uebersprungen wird.
+#
+# Voller Pfad statt nur 'usermod': dieses Skript laeuft ueber
+# sudo/plugininstall.pl mit einem knappen PATH, der /usr/sbin (wo usermod auf
+# Debian liegt) nicht zwingend enthaelt. Genau das ist mir beim manuellen
+# Nachstellen selbst passiert ('usermod: command not found' unter su) - und
+# der erste Fix hier hatte das still verschluckt, weil weder Erfolg noch
+# Fehlschlag protokolliert wurden. Jetzt beides: vollen Pfad UND eine
+# Meldung, damit ein erneutes Scheitern nicht wieder unbemerkt bleibt.
 if getent group docker >/dev/null 2>&1
 then
-	usermod -aG docker loxberry
+	if /usr/sbin/usermod -aG docker loxberry
+	then
+		echo "<OK> Benutzer loxberry ist Mitglied der Gruppe docker."
+	else
+		echo "<FAIL> Benutzer loxberry liess sich der Gruppe docker nicht hinzufuegen."
+	fi
 else
 	echo "<FAIL> Die Gruppe docker gibt es nicht - ist Docker wirklich eingerichtet?"
 fi
