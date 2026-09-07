@@ -121,3 +121,9 @@
 	border-top: 1px solid #eee;
 	margin: 16px 0;
 }
+
+.dk-webif {
+	display: inline-block;
+	margin-right: 12px;
+	text-decoration: none;
+}

@@ -23,8 +23,10 @@ use DockerLib qw(
     docker_bin
     docker_zustand
     docker_zaehlung
+    docker_webifs
     docker_portainer_laeuft
     docker_portainer_einrichten
+    docker_portainer_passwort_unveraendert
 );
 
 my $version = LoxBerry::System::pluginversion();
@@ -56,8 +58,18 @@ if ($R::aktion && $R::aktion eq 'neu_einrichten') {
 my $docker_da = docker_bin();
 my ($ok, undef, $zustand_meldung) = docker_zustand();
 my $z = docker_zaehlung();
+docker_webifs($z->{liste});
 my $cfg = docker_config_read();
 my $portainer_laeuft = docker_portainer_laeuft($cfg->{portainer_name});
+
+my $passwort_unveraendert = 0;
+if ($portainer_laeuft && $cfg->{portainer_password}) {
+    $passwort_unveraendert = docker_portainer_passwort_unveraendert(
+    $cfg->{portainer_port},
+    $cfg->{portainer_password}
+    );
+}
+
 
 # Adresse der Portainer-Oberflaeche.
 #
@@ -82,11 +94,22 @@ my $portainer_url = 'http://' . $portainer_host . ':' . $cfg->{portainer_port};
 
 my @containerliste;
 foreach my $c (@{$z->{liste}}) {
+    my @webifs;
+
+    foreach my $w (@{$c->{webifs} || []}) {
+        push @webifs, {
+            PORT   => $w->{port},
+            SCHEME => $w->{scheme},
+            URL    => $w->{scheme} . '://' . $portainer_host . ':' . $w->{port} . '/',
+        };
+    }
+
     push @containerliste, {
         NAME    => $c->{name},
         ABBILD  => $c->{image},
         ZUSTAND => $c->{status},
         LAEUFT  => $c->{laeuft},
+        WEBIFS  => \@webifs,
     };
 }
 
@@ -106,51 +129,53 @@ my %L = LoxBerry::System::readlanguage($template, "language.ini");
 # Sprachphrasen an die Vorlage uebergeben
 # ---------------------------------------------------
 $template->param(
-    lblKDocker              => $L{'DOCKER.K_DOCKER'},
-    lblKGesamt              => $L{'DOCKER.K_GESAMT'},
-    lblKLaeuft              => $L{'DOCKER.K_LAEUFT'},
-    lblKGestoppt            => $L{'DOCKER.K_GESTOPPT'},
-    lblKPortainer           => $L{'DOCKER.K_PORTAINER'},
-    lblJa                   => $L{'DOCKER.JA'},
-    lblNein                 => $L{'DOCKER.NEIN'},
-    lblStatusLaeuft         => $L{'DOCKER.STATUS_LAEUFT'},
-    lblStatusGestoppt       => $L{'DOCKER.STATUS_GESTOPPT'},
+    lblKDocker               => $L{'DOCKER.K_DOCKER'},
+    lblKGesamt               => $L{'DOCKER.K_GESAMT'},
+    lblKLaeuft               => $L{'DOCKER.K_LAEUFT'},
+    lblKGestoppt             => $L{'DOCKER.K_GESTOPPT'},
+    lblKPortainer            => $L{'DOCKER.K_PORTAINER'},
+    lblJa                    => $L{'DOCKER.JA'},
+    lblNein                  => $L{'DOCKER.NEIN'},
+    lblStatusLaeuft          => $L{'DOCKER.STATUS_LAEUFT'},
+    lblStatusGestoppt        => $L{'DOCKER.STATUS_GESTOPPT'},
     lblNichtAnsprechbarTitel => $L{'DOCKER.NICHT_ANSPRECHBAR_TITEL'},
-    lblPortainerTitel       => $L{'DOCKER.PORTAINER_TITEL'},
-    lblPortainerText        => $L{'DOCKER.PORTAINER_TEXT'},
-    lblBOeffnen             => $L{'DOCKER.B_OEFFNEN'},
-    lblPasswortTitel        => $L{'DOCKER.PASSWORT_TITEL'},
-    lblPasswortText         => $L{'DOCKER.PASSWORT_TEXT'},
-    lblPasswortAnzeigen     => $L{'DOCKER.PASSWORT_ANZEIGEN'},
-    lblPasswortUnbekannt    => $L{'DOCKER.PASSWORT_UNBEKANNT'},
-    lblBNeueinrichten       => $L{'DOCKER.B_NEUEINRICHTEN'},
-    lblNeueinrichtenText    => $L{'DOCKER.NEUEINRICHTEN_TEXT'},
-    lblContainerTitel       => $L{'DOCKER.CONTAINER_TITEL'},
-    lblTName                => $L{'DOCKER.T_NAME'},
-    lblTAbbild              => $L{'DOCKER.T_ABBILD'},
-    lblTZustand             => $L{'DOCKER.T_ZUSTAND'},
-    lblKeineContainer       => $L{'DOCKER.KEINE_CONTAINER'},
-    lblMqttTitel            => $L{'DOCKER.MQTT_TITEL'},
-    lblMqttText             => $L{'DOCKER.MQTT_TEXT'},
+    lblPortainerTitel        => $L{'DOCKER.PORTAINER_TITEL'},
+    lblPortainerText         => $L{'DOCKER.PORTAINER_TEXT'},
+    lblBOeffnen              => $L{'DOCKER.B_OEFFNEN'},
+    lblPasswortTitel         => $L{'DOCKER.PASSWORT_TITEL'},
+    lblPasswortText          => $L{'DOCKER.PASSWORT_TEXT'},
+    lblPasswortAnzeigen      => $L{'DOCKER.PASSWORT_ANZEIGEN'},
+    lblPasswortUnbekannt     => $L{'DOCKER.PASSWORT_UNBEKANNT'},
+    lblBNeueinrichten        => $L{'DOCKER.B_NEUEINRICHTEN'},
+    lblNeueinrichtenText     => $L{'DOCKER.NEUEINRICHTEN_TEXT'},
+    lblContainerTitel        => $L{'DOCKER.CONTAINER_TITEL'},
+    lblTName                 => $L{'DOCKER.T_NAME'},
+    lblTAbbild               => $L{'DOCKER.T_ABBILD'},
+    lblTZustand              => $L{'DOCKER.T_ZUSTAND'},
+    lblTWebIF                => $L{'DOCKER.T_WEBIF'},
+    lblKeineContainer        => $L{'DOCKER.KEINE_CONTAINER'},
+    lblMqttTitel             => $L{'DOCKER.MQTT_TITEL'},
+    lblMqttText              => $L{'DOCKER.MQTT_TEXT'},
 );
 
 # ---------------------------------------------------
 # Zustand an die Vorlage uebergeben
 # ---------------------------------------------------
 $template->param(
-    DOCKER_JA        => $docker_da,
-    DOCKER_OK        => $ok,
-    ZustandMeldung   => $zustand_meldung,
-    GESAMT           => $z->{gesamt},
-    LAEUFT           => $z->{laeuft},
-    GESTOPPT         => $z->{gestoppt},
-    PORTAINER_LAEUFT => $portainer_laeuft,
-    PORTAINER_URL    => $portainer_url,
-    PORTAINER_PORT   => $cfg->{portainer_port},
-    PASSWORT         => $cfg->{portainer_password},
-    CONTAINERLISTE   => \@containerliste,
-    MELDUNG          => $meldung,
-    FEHLER           => [ map { { TEXT => $_ } } @fehler ],
+    DOCKER_JA             => $docker_da,
+    DOCKER_OK             => $ok,
+    ZustandMeldung        => $zustand_meldung,
+    GESAMT                => $z->{gesamt},
+    LAEUFT                => $z->{laeuft},
+    GESTOPPT              => $z->{gestoppt},
+    PORTAINER_LAEUFT      => $portainer_laeuft,
+    PORTAINER_URL         => $portainer_url,
+    PORTAINER_PORT        => $cfg->{portainer_port},
+    PASSWORT              => $cfg->{portainer_password},
+    CONTAINERLISTE        => \@containerliste,
+    MELDUNG               => $meldung,
+    FEHLER                => [ map { { TEXT => $_ } } @fehler ],
+    PASSWORT_UNVERAENDERT => $passwort_unveraendert,
 );
 
 print $template->output();

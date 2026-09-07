@@ -23,13 +23,18 @@ our @EXPORT_OK = qw(
     docker_version
     docker_zustand
     docker_container
+    docker_webifs
     docker_zaehlung
     docker_portainer_laeuft
     docker_portainer_einrichten
+    docker_portainer_passwort_unveraendert
     docker_log
 );
 
 our $PORTAINER_IMAGE = 'portainer/portainer-ce:latest';
+
+our $http_port  = '9990';
+our $https_port = '9443';
 
 # Eigener Containername und eigenes Datenverzeichnis - bewusst NICHT das
 # schlichte "portainer" / "/opt/portainer".
@@ -96,9 +101,10 @@ sub docker_paths {
     make_path($logdir) if (!-d $logdir);
 
     return {
-        config    => "$configdir/dockerng.json",
-        configdir => $configdir,
-        logdir    => $logdir,
+        config     => "$configdir/dockerng.json",
+        webifcache => "$configdir/dockerng_webif.json",
+        configdir  => $configdir,
+        logdir     => $logdir,
     };
 }
 
@@ -114,7 +120,7 @@ sub docker_config_read {
     my $cfg = $json->open(filename => $p->{config}, readonly => 1, locktimeout => 3);
     $cfg = {} if (!defined $cfg || ref($cfg) ne 'HASH');
 
-    $cfg->{portainer_port} = 9000 if (!$cfg->{portainer_port} || $cfg->{portainer_port} !~ /^\d+$/);
+    $cfg->{portainer_port} = $http_port if (!$cfg->{portainer_port} || $cfg->{portainer_port} !~ /^\d+$/);
     $cfg->{portainer_name} = $PORTAINER_NAME_STD
         if (!defined $cfg->{portainer_name} || $cfg->{portainer_name} !~ /^[A-Za-z0-9_.-]{1,64}$/);
     $cfg->{portainer_password} = '' if (!defined $cfg->{portainer_password});
@@ -241,22 +247,170 @@ sub docker_container {
     my ($ok) = docker_zustand();
     return [] if (!$ok);
 
-    my ($ausgabe, undef, $code) = _ausfuehren(q{docker ps -a --format '{{.Names}}}."\t".q{{{.Image}}}."\t".q{{{.Status}}}."'");
+    my ($ausgabe, undef, $code) = _ausfuehren(q{docker ps -a --format '{{.Names}}}."\t".q{{{.Image}}}."\t".q{{{.Status}}}."\t".q{{{.Ports}}}."'");
     return [] if ($code != 0);
 
     my @liste;
     foreach my $zeile (@$ausgabe) {
         next if ($zeile eq '');
-        my @t = split(/\t/, $zeile);
-        next if (scalar(@t) < 3);
+
+        my @t = split(/\t/, $zeile, 4);
+        next if (scalar(@t) < 4);
+
+        my $ports_raw = $t[3] || '';
+        my @host_ports;
+
+
+        my $host_network = 0;
+        my @exposed_ports;
+
+        my ($inspect, undef, $icode) = _ausfuehren(
+            "docker inspect --format '{{.HostConfig.NetworkMode}}|{{range \$p, \$v := .Config.ExposedPorts}}{{\$p}} {{end}}' "
+            . quotemeta($t[0])
+        );
+
+        if ($icode == 0 && @$inspect) {
+            my ($network, $exposed) = split(/\|/, $inspect->[0], 2);
+            $host_network = ($network eq 'host') ? 1 : 0;
+
+            foreach my $p (split(/\s+/, $exposed || '')) {
+                if ($p =~ /^(\d+)\/tcp$/) {
+                    push @exposed_ports, $1;
+                }
+            }
+        }
+
+        # Nur veröffentlichte TCP-Hostports
+        foreach my $port (split(/,\s*/, $ports_raw)) {
+
+            # IPv6-Duplikate ignorieren
+            next if ($port =~ /^\[::\]/);
+
+            # z.B.:
+            # 0.0.0.0:9990->9000/tcp
+            # 192.168.1.10:8080->80/tcp
+            if ($port =~ /^(?:[\d.]+):(\d+)->\d+\/tcp$/) {
+                push @host_ports, $1;
+            }
+        }
+
+        if ($host_network) {
+            push @host_ports, @exposed_ports;
+        }
+
+        # Doppelte Ports entfernen
+        my %seen;
+        @host_ports = grep { !$seen{$_}++ } @host_ports;
+
         push @liste, {
-            name    => $t[0],
-            image   => $t[1],
-            status  => $t[2],
-            laeuft  => (index($t[2], 'Up') == 0) ? 1 : 0,
+            name       => $t[0],
+            image      => $t[1],
+            status     => $t[2],
+            ports      => \@host_ports,
+            laeuft     => (index($t[2], 'Up') == 0) ? 1 : 0,
         };
     }
+
     return \@liste;
+}
+
+sub docker_webifs {
+    my ($liste) = @_;
+    my $p = docker_paths();
+    my $json = LoxBerry::JSON->new();
+    my $cache = $json->open(filename => $p->{webifcache}, readonly => 1, locktimeout => 2);
+    $cache = {} if (!defined $cache || ref($cache) ne 'HASH');
+
+    my %aktuell;
+    my $jetzt = time();
+
+    foreach my $c (@$liste) {
+        next if (!$c->{laeuft});
+        foreach my $port (@{$c->{ports} || []}) {
+            my $key = $c->{name} . ':' . $port;
+            $aktuell{$key} = 1;
+
+            if (exists $cache->{$key}) {
+                next if ($cache->{$key}{scheme} && ($cache->{$key}{scheme} eq 'http' || $cache->{$key}{scheme} eq 'https'));
+                next if ($cache->{$key}{checked} && ($jetzt - $cache->{$key}{checked}) < 300);
+            }
+
+            my ($gefunden, $schema) = _docker_webif_test($port);
+            $cache->{$key} = {
+                scheme  => $gefunden ? $schema : '',
+                checked => $jetzt,
+            };
+        }
+    }
+
+    foreach my $key (keys %$cache) {
+        delete $cache->{$key} if (!$aktuell{$key});
+    }
+
+    my $write = LoxBerry::JSON->new();
+    my $cfg = $write->open(filename => $p->{webifcache}, lockexclusive => 1, locktimeout => 2);
+    if (defined $cfg && ref($cfg) eq 'HASH') {
+        $write->{jsonobj} = $cache;
+        $write->write();
+    }
+
+    foreach my $c (@$liste) {
+        my @webifs;
+        foreach my $port (@{$c->{ports} || []}) {
+            my $key = $c->{name} . ':' . $port;
+            next if (!$cache->{$key}{scheme});
+            push @webifs, { port => $port, scheme => $cache->{$key}{scheme} };
+        }
+        $c->{webifs} = \@webifs;
+        $c->{webif} = @webifs ? $webifs[0] : undef;
+    }
+
+    return $liste;
+}
+
+
+sub _docker_webif_test {
+    my ($port) = @_;
+
+    # Erst HTTP testen
+    my $url = "http://127.0.0.1:$port/";
+
+    my $cmd =
+        "curl -L --max-time 2 --connect-timeout 1 "
+        . "-s -o /dev/null -w '%{http_code}' "
+        . "'$url'";
+
+    my ($ausgabe, undef, $code) = _ausfuehren($cmd);
+
+    if ($code == 0 && $ausgabe && @$ausgabe) {
+        my $http_code = join('', @$ausgabe);
+        $http_code =~ s/\s+//g;
+
+        if ($http_code =~ /^(?:200|201|202|204|301|302|303|307|308|401|403)$/) {
+            return (1, 'http');
+        }
+    }
+
+    # Danach HTTPS testen
+    $url = "https://127.0.0.1:$port/";
+
+    $cmd =
+        "curl -k -L --max-time 2 --connect-timeout 1 "
+        . "-s -o /dev/null -w '%{http_code}' "
+        . "'$url'";
+
+    ($ausgabe, undef, $code) = _ausfuehren($cmd);
+
+    if ($code == 0 && $ausgabe && @$ausgabe) {
+        my $http_code = join('', @$ausgabe);
+        $http_code =~ s/\s+//g;
+
+        if ($http_code =~ /^(?:200|201|202|204|301|302|303|307|308|401|403)$/) {
+            return (1, 'https');
+        }
+    }
+
+    return (0, '');
 }
 
 sub docker_zaehlung {
@@ -303,6 +457,31 @@ sub _freien_port_finden {
     }
     return $start;
 }
+
+
+sub docker_portainer_passwort_unveraendert {
+    my ($port, $passwort) = @_;
+    return 0 if (!$port || !$passwort);
+
+    my $datei = "/tmp/portainer_pw_check.$$";
+    open(my $fh, '>', $datei) or return 0;
+    chmod 0600, $datei;
+    print {$fh} '{"Username":"admin","Password":"' . $passwort . '"}';
+    close($fh);
+
+    my $cmd = "curl -s -o /dev/null -w '%{http_code}' "
+        . "--max-time 2 --connect-timeout 1 "
+        . "-H 'Content-Type: application/json' "
+        . "--data-binary \@$datei "
+        . "http://127.0.0.1:$port/api/auth";
+
+    my ($ausgabe, undef, $code) = _ausfuehren($cmd);
+    unlink($datei);
+
+    return 1 if ($code == 0 && $ausgabe && @$ausgabe && $ausgabe->[0] eq '200');
+    return 0;
+}
+
 
 # ---------------- Portainer einrichten ----------------
 #
@@ -367,17 +546,23 @@ sub docker_portainer_einrichten {
         $cfg->{portainer_port} = $port;
     }
 
-    # Der HTTPS-Zusatzport ist ein Bonus, kein Muss - '--http-enabled' macht
-    # Portainer bereits ueber $port vollstaendig erreichbar. Ist 9443 belegt,
-    # wird die Zuordnung einfach weggelassen statt die ganze Einrichtung
-    # daran scheitern zu lassen.
-    my $https_zuordnung = ' -p=9443:9443';
-    if (!_port_frei(9443)) {
-        docker_log()->WARN('Port 9443 ist belegt - Portainer bleibt ohne den optionalen '
-            . 'HTTPS-Zusatzport erreichbar, der normale Zugang ueber Port '
-            . $port . ' funktioniert davon unabhaengig.');
-        $https_zuordnung = '';
-    }
+    my $https_zuordnung = "";
+#   # Der HTTPS-Zusatzport ist ein Bonus, kein Muss - '--http-enabled' macht
+#   # Portainer bereits ueber $port vollstaendig erreichbar. Ist 9443 belegt,
+#   # wird die Zuordnung einfach weggelassen statt die ganze Einrichtung
+#   # daran scheitern zu lassen.
+#   $https_zuordnung = " -p=$https_port:9443";
+#   if (!_port_frei($https_port)) {
+#       my $ausweich = _freien_port_finden($https_port + 1);
+#       docker_log()->WARN("Port $https_port ist belegt (vermutlich ein anderer Dienst mit "
+#           . "eigenem Netzwerk, z.B. PiHole) - weiche auf Port $ausweich aus.");
+#       $https_port = $ausweich;
+#       $https_zuordnung = " -p=${https_port}:9443";
+#       # docker_log()->WARN('Port ${https_port} ist belegt - Portainer bleibt ohne den optionalen '
+#       #     . 'HTTPS-Zusatzport erreichbar, der normale Zugang ueber Port '
+#       #     . $port . ' funktioniert davon unabhaengig.');
+#       # $https_zuordnung = '';
+#   }
 
     my (undef, $pullfehler, $pullcode) = _ausfuehren("docker pull $PORTAINER_IMAGE");
     if ($pullcode != 0) {
@@ -394,62 +579,20 @@ sub docker_portainer_einrichten {
         $passwort = docker_password_neu();
     }
 
-    # Die Passwortdatei liegt DAUERHAFT im Datenverzeichnis - nicht in /tmp,
-    # und sie wird nach dem Start auch nicht mehr geloescht.
-    #
-    # Frueher lag sie unter /tmp/portainer_admin_password.<PID> und wurde
-    # gleich nach dem Start entfernt. Das war ein schwerer Fehler: die Datei
-    # ist Quelle eines Bind-Mounts, und der gehoert dauerhaft zur
-    # Container-Definition. Solange der Container durchlief, fiel es nicht
-    # auf - sobald er aber neu starten musste (Neustart des Docker-Dienstes,
-    # etwa weil ein anderes Plugin Docker-Pakete installiert, oder schlicht
-    # ein Reboot), wollte Docker den Mount wiederherstellen, fand die Quelle
-    # nicht und legte an ihrer Stelle ein VERZEICHNIS an. Portainer bekam
-    # damit ein Verzeichnis statt einer Datei und brach mit Rueckgabewert 127
-    # ab: der Container blieb tot zurueck.
-    #
-    # Nachgestellt: nach der Installation von AudioServer4Home stand
-    # portainer-ng auf "Exited (127)", waehrend Port 9000 voellig frei war -
-    # es war also nie ein Portkonflikt, sondern immer diese fehlende Datei.
-    #
-    # Sicherheitlich ist das unbedenklich: dasselbe Passwort steht ohnehin in
-    # dockerng.json. Die Datei bekommt 0600 und liegt in einem Verzeichnis,
-    # das bei der Deinstallation mitentfernt wird.
-    make_path($PORTAINER_DATA) if (!-d $PORTAINER_DATA);
-
-    # Eigentuemer auf loxberry setzen, solange wir root sind (Installation).
-    # Sonst gehoert das Verzeichnis root, und die Oberflaeche - die als
-    # loxberry laeuft - koennte die Passwortdatei bei "Portainer neu
-    # einrichten" nicht schreiben ("Inappropriate ioctl for device", genau so
-    # aufgetreten). Portainer selbst laeuft im Container als root und schreibt
-    # unabhaengig davon weiter in /data.
-    if ($> == 0) {
-        my (undef, undef, $uid, $gid) = getpwnam('loxberry');
-        chown($uid, $gid, $PORTAINER_DATA) if (defined $uid);
+    # Das Passwort landet NUR fluechtig auf der Platte, fuer den einen
+    # Moment, in dem der Docker-Daemon (als root) die Bind-Mount-Quelle liest.
+    # /tmp traegt sowohl von root (postroot.sh) als auch von loxberry (CGI)
+    # aus - der Daemon selbst liest als root ohnehin unabhaengig von den
+    # Dateirechten des Erstellers.
+    my $pwdatei = "/tmp/portainer_admin_password.$$";
+    if (!open(my $fh, '>', $pwdatei)) {
+        docker_log()->ERR("Temporaere Passwortdatei liess sich nicht anlegen: $!");
+        return (0, "Temporaere Passwortdatei liess sich nicht anlegen: $!");
+    } else {
+        chmod 0600, $pwdatei;
+        print {$fh} $passwort;
+        close($fh);
     }
-
-    my $pwdatei = "$PORTAINER_DATA/.admin_password";
-
-    # Nur schreiben, wenn noetig. Steht das richtige Passwort schon drin,
-    # bleibt die Datei unangetastet - das vermeidet einen Schreibversuch in
-    # Faellen, in denen die Rechte nicht passen, obwohl gar nichts zu tun ist.
-    my $vorhanden = '';
-    if (open(my $lesen, '<', $pwdatei)) {
-        local $/;
-        $vorhanden = <$lesen> // '';
-        close($lesen);
-    }
-
-    if ($vorhanden ne $passwort) {
-        if (!open(my $fh, '>', $pwdatei)) {
-            docker_log()->ERR("Passwortdatei liess sich nicht anlegen: $!");
-            return (0, "Passwortdatei liess sich nicht anlegen: $!");
-        } else {
-            print {$fh} $passwort;
-            close($fh);
-        }
-    }
-    chmod 0600, $pwdatei;
 
     my $run = 'docker run'
         . ' --volume=/var/run/docker.sock:/var/run/docker.sock'
@@ -458,26 +601,90 @@ sub docker_portainer_einrichten {
         . " -p=$port:9000$https_zuordnung"
         . " --name=$qname --restart=unless-stopped --detach=true"
         . " $PORTAINER_IMAGE --http-enabled --admin-password-file=/run/portainer_admin_password";
+
+
+    # Das Bootstrap-Passwort wird nur beim allerersten Start OHNE bestehendes
+    # Konto ausgewertet. Kurz warten, bis Portainer antwortet, dann erst die
+    # Datei entfernen - sonst besteht ein winziges Zeitfenster, in dem der
+    # Container zwar schon laeuft, das Passwort aber noch nicht gelesen hat.
     my (undef, $runfehler, $runcode) = _ausfuehren($run);
 
-    # Warten, bis Portainer antwortet - das Bootstrap-Passwort wird nur beim
-    # allerersten Start ohne bestehendes Konto ausgewertet, und der Aufrufer
-    # soll erst zurueckkehren, wenn der Dienst wirklich erreichbar ist.
-    #
-    # Die Passwortdatei wird hier NICHT geloescht: sie ist Quelle eines
-    # Bind-Mounts und muss existieren, solange der Container existiert (siehe
-    # ausfuehrliche Begruendung weiter oben).
-    if ($runcode == 0) {
-        for (1 .. 10) {
-            my (undef, undef, $code) = _ausfuehren("curl -s -o /dev/null -m 2 http://127.0.0.1:$port/");
-            last if ($code == 0);
-            sleep(1);
-        }
-    }
-
     if ($runcode != 0) {
+        unlink($pwdatei);
+
         docker_log()->ERR("Portainer liess sich nicht starten: $runfehler");
         return (0, "Portainer liess sich nicht starten: $runfehler");
+    }
+
+    # Warten, bis Portainer wirklich erreichbar ist.
+    my $erreichbar = 0;
+
+    for (1 .. 15) {
+        my (undef, undef, $code) =
+            _ausfuehren("curl -s -o /dev/null -m 2 http://127.0.0.1:$port/");
+
+        if ($code == 0) {
+            $erreichbar = 1;
+            last;
+        }
+
+        sleep(1);
+    }
+
+    if (!$erreichbar) {
+        unlink($pwdatei);
+
+        docker_log()->ERR(
+            'Portainer wurde gestartet, antwortet aber nicht innerhalb des Zeitlimits.'
+        );
+
+        return (
+            0,
+            'Portainer wurde gestartet, antwortet aber nicht innerhalb des Zeitlimits.'
+        );
+    }
+
+    # Passwortdatei kann jetzt entfernt werden.
+    unlink($pwdatei);
+
+    # WICHTIG:
+    # Der erste Container enthaelt noch den /tmp-Passwort-Mount.
+    # Dieser Container wird deshalb entfernt und ohne Passwort-Mount
+    # dauerhaft neu erstellt.
+    my (undef, $rmfehler, $rmcode) =
+        _ausfuehren('docker rm --force ' . $qname);
+
+    if ($rmcode != 0) {
+        docker_log()->ERR(
+            "Temporarer Portainer-Container liess sich nicht entfernen: $rmfehler"
+        );
+
+        return (
+            0,
+            "Temporarer Portainer-Container liess sich nicht entfernen: $rmfehler"
+        );
+    }
+
+    # Dauerhafter Portainer-Container OHNE /tmp-Passwortdatei.
+    my $run_normal = 'docker run'
+        . ' --volume=/var/run/docker.sock:/var/run/docker.sock'
+        . " --volume=$PORTAINER_DATA:/data"
+        . " -p=$port:9000"
+        . " --name=$qname --restart=unless-stopped --detach=true"
+        . " $PORTAINER_IMAGE --http-enabled";
+
+    my (undef, $normalfehler, $normalcode) =
+        _ausfuehren($run_normal);
+
+    if ($normalcode != 0) {
+        docker_log()->ERR(
+            "Portainer liess sich ohne Passwort-Mount nicht starten: $normalfehler"
+        );
+
+        return (
+            0,
+            "Portainer liess sich ohne Passwort-Mount nicht starten: $normalfehler"
+        );
     }
 
     # Der Container laeuft ab hier auf jeden Fall - ein Fehlschlag ab hier

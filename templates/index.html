@@ -28,22 +28,23 @@
 <div class="dk-karte">
 	<h3><TMPL_VAR lblPortainerTitel></h3>
 	<p><TMPL_VAR lblPortainerText></p>
-	<a class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" href="<TMPL_VAR PORTAINER_URL>" target="_blank" rel="noopener"><TMPL_VAR lblBOeffnen> (Port <TMPL_VAR PORTAINER_PORT>)</a>
+	<!-- <a class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" href="<TMPL_VAR PORTAINER_URL>" target="_blank" rel="noopener"><TMPL_VAR lblBOeffnen> (Port <TMPL_VAR PORTAINER_PORT>)</a> -->
+	<a class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" href="<TMPL_VAR PORTAINER_URL>" target="_blank" rel="noopener"><TMPL_VAR lblBOeffnen></a>
 
-	<hr class="dk-trenner">
-
-	<h4><TMPL_VAR lblPasswortTitel></h4>
-	<TMPL_IF PASSWORT>
-	<p><TMPL_VAR lblPasswortText></p>
-	<details class="dk-passwort">
-		<summary><TMPL_VAR lblPasswortAnzeigen></summary>
-		<span class="dk-passwort-wert"><TMPL_VAR PASSWORT></span>
-	</details>
-	<TMPL_ELSE>
-	<div class="dk-hinweis"><TMPL_VAR lblPasswortUnbekannt></div>
+	<TMPL_IF PASSWORT_UNVERAENDERT>
+		<hr class="dk-trenner">
+		<h4><TMPL_VAR lblPasswortTitel></h4>
+		<TMPL_IF PASSWORT>
+		<p><TMPL_VAR lblPasswortText></p>
+		<details class="dk-passwort">
+			<summary><TMPL_VAR lblPasswortAnzeigen></summary>
+			<span class="dk-passwort-wert"><TMPL_VAR PASSWORT></span>
+		</details>
+		<TMPL_ELSE>
+		<div class="dk-hinweis"><TMPL_VAR lblPasswortUnbekannt></div>
 	</TMPL_IF>
 
-	<hr class="dk-trenner">
+	<hr class="dk-trenner"> </TMPL_IF>
 
 	<form action="index.cgi" method="post">
 		<input type="hidden" name="aktion" value="neu_einrichten">
@@ -56,11 +57,24 @@
 	<h3><TMPL_VAR lblContainerTitel></h3>
 	<TMPL_IF CONTAINERLISTE>
 	<table class="dk-tabelle">
-		<tr><th><TMPL_VAR lblTName></th><th><TMPL_VAR lblTAbbild></th><th><TMPL_VAR lblTZustand></th></tr>
+		<tr>
+        	<th><TMPL_VAR lblTName></th>
+        	<th><TMPL_VAR lblTWebIF></th>
+        	<th><TMPL_VAR lblTAbbild></th>
+			<th><TMPL_VAR lblTZustand></th>
+		</tr>
 		<TMPL_LOOP CONTAINERLISTE>
 		<tr>
-			<td class="dk-mono"><TMPL_VAR NAME></td>
-			<td class="dk-mono"><TMPL_VAR ABBILD></td>
+		    <td class="dk-mono"><TMPL_VAR NAME></td>
+			<td>
+			    <TMPL_LOOP WEBIFS>
+			        <a class="dk-webif"
+			           href="<TMPL_VAR URL>"
+			           target="_blank"
+			           rel="noopener"><TMPL_VAR PORT></a>
+			    </TMPL_LOOP>
+			</td>
+		    <td class="dk-mono"><TMPL_VAR ABBILD></td>
 			<td class="<TMPL_IF LAEUFT>dk-an<TMPL_ELSE>dk-aus</TMPL_IF>"><TMPL_VAR ZUSTAND></td>
 		</tr>
 		</TMPL_LOOP>
