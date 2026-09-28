@@ -28,20 +28,56 @@
 <div class="dk-karte">
 	<h3><TMPL_VAR lblPortainerTitel></h3>
 	<p><TMPL_VAR lblPortainerText></p>
-	<a class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" href="<TMPL_VAR PORTAINER_URL>" target="_blank" rel="noopener"><TMPL_VAR lblBOeffnen> (Port <TMPL_VAR PORTAINER_PORT>)</a>
+	<TMPL_LOOP PORTS_BELEGT>
+	<div class="dk-warnung"><TMPL_VAR TEXT></div>
+	</TMPL_LOOP>
+	<TMPL_IF HTTP_AKTIV>
+	<a class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" href="<TMPL_VAR PORTAINER_URL ESCAPE=HTML>" target="_blank" rel="noopener"><TMPL_VAR lblBOeffnen> (Port <TMPL_VAR PORTAINER_PORT>)</a>
+	</TMPL_IF>
+	<TMPL_IF HTTPS_AKTIV>
+	<a class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" href="<TMPL_VAR PORTAINER_URL_HTTPS ESCAPE=HTML>" target="_blank" rel="noopener"><TMPL_VAR lblBOeffnenHttps> (Port <TMPL_VAR PORTAINER_HTTPS_PORT>)</a>
+	</TMPL_IF>
 
 	<hr class="dk-trenner">
 
 	<h4><TMPL_VAR lblPasswortTitel></h4>
+	<TMPL_IF PASSWORT_GEAENDERT>
+	<div class="dk-hinweis"><TMPL_VAR lblPasswortGeaendert></div>
+	<TMPL_ELSE>
 	<TMPL_IF PASSWORT>
 	<p><TMPL_VAR lblPasswortText></p>
 	<details class="dk-passwort">
 		<summary><TMPL_VAR lblPasswortAnzeigen></summary>
-		<span class="dk-passwort-wert"><TMPL_VAR PASSWORT></span>
+		<span class="dk-passwort-wert"><TMPL_VAR PASSWORT ESCAPE=HTML></span>
 	</details>
 	<TMPL_ELSE>
 	<div class="dk-hinweis"><TMPL_VAR lblPasswortUnbekannt></div>
 	</TMPL_IF>
+	</TMPL_IF>
+	<form action="index.cgi" method="post" data-ajax="false" onsubmit="return confirm('<TMPL_VAR lblPasswortZuruecksetzenFrage ESCAPE=JS>');">
+		<input type="hidden" name="aktion" value="passwort_zuruecksetzen">
+		<p><TMPL_VAR lblPasswortZuruecksetzenText></p>
+		<button class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" type="submit"><TMPL_VAR lblBPasswortZuruecksetzen></button>
+	</form>
+
+	<hr class="dk-trenner">
+
+	<h4><TMPL_VAR lblPortsTitel></h4>
+	<p><TMPL_VAR lblPortsText></p>
+	<form action="index.cgi" method="post" data-ajax="false">
+		<input type="hidden" name="aktion" value="ports_speichern">
+		<div class="dk-ports">
+			<label><TMPL_VAR lblPortHttp>
+				<input type="number" name="http_port" min="1024" max="65535" value="<TMPL_VAR FELD_HTTP ESCAPE=HTML>" data-role="none" class="dk-port-feld"></label>
+			<label><TMPL_VAR lblPortHttps>
+				<input type="number" name="https_port" min="1024" max="65535" value="<TMPL_VAR FELD_HTTPS ESCAPE=HTML>" data-role="none" class="dk-port-feld"></label>
+		</div>
+		<button class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" type="submit"><TMPL_VAR lblBPortsSpeichern></button>
+	</form>
+	<form action="index.cgi" method="post" data-ajax="false">
+		<input type="hidden" name="aktion" value="ports_suchen">
+		<button class="ui-btn ui-input-btn ui-corner-all ui-shadow dk-btn-schmal" type="submit"><TMPL_VAR lblBPortsSuchen></button>
+	</form>
 
 	<hr class="dk-trenner">
 
@@ -56,11 +92,17 @@
 	<h3><TMPL_VAR lblContainerTitel></h3>
 	<TMPL_IF CONTAINERLISTE>
 	<table class="dk-tabelle">
-		<tr><th><TMPL_VAR lblTName></th><th><TMPL_VAR lblTAbbild></th><th><TMPL_VAR lblTZustand></th></tr>
+		<tr><th><TMPL_VAR lblTName></th><th><TMPL_VAR lblTPorts></th><th><TMPL_VAR lblTAbbild></th><th><TMPL_VAR lblTZustand></th></tr>
 		<TMPL_LOOP CONTAINERLISTE>
 		<tr>
-			<td class="dk-mono"><TMPL_VAR NAME></td>
-			<td class="dk-mono"><TMPL_VAR ABBILD></td>
+			<td class="dk-mono"><TMPL_VAR NAME ESCAPE=HTML></td>
+			<td>
+				<TMPL_LOOP PORTS>
+				<a class="dk-port" href="index.cgi?oeffnen=<TMPL_VAR PORT>" target="_blank" rel="noopener" title="<TMPL_VAR lblPortOeffnen ESCAPE=HTML>"><TMPL_VAR PORT></a>
+				</TMPL_LOOP>
+				<TMPL_UNLESS PORTS>&ndash;</TMPL_UNLESS>
+			</td>
+			<td class="dk-mono"><TMPL_VAR ABBILD ESCAPE=HTML></td>
 			<td class="<TMPL_IF LAEUFT>dk-an<TMPL_ELSE>dk-aus</TMPL_IF>"><TMPL_VAR ZUSTAND></td>
 		</tr>
 		</TMPL_LOOP>

@@ -22,10 +22,18 @@ Kapazität für die Weiterpflege.
 - **Automatisch erzeugtes Administratorkennwort** für Portainer, direkt in der Oberfläche
   einsehbar - kein manuelles Ablesen eines Setup-Tokens aus dem Containerprotokoll mehr, das
   ohnehin nach fünf Minuten verfällt.
-- `--http-enabled` wird beim Einrichten automatisch gesetzt: ab Portainer CE 2.19 bleibt Port
-  9000 sonst stumm (Weiterleitung auf `/timeout.html` statt der Anmeldeseite).
-- Statuskacheln, Containertabelle, Schaltfläche "Portainer neu einrichten" für einen
-  kontrollierten Neuaufbau.
+- `--http-enabled` wird beim Einrichten automatisch gesetzt: ab Portainer CE 2.19 bleibt der
+  HTTP-Port sonst stumm (Weiterleitung auf `/timeout.html` statt der Anmeldeseite).
+- **Ports einstellbar:** Portainer ist per HTTP (Standard 9990) und HTTPS (Standard 9443)
+  erreichbar. Ist ein Port bei der Einrichtung belegt, wird automatisch der nächste freie
+  verwendet. Beide Ports lassen sich in der Oberfläche ändern; "Freie Ports suchen" schlägt
+  freie Ports vor, falls ein anderes Plugin einen Port nachträglich belegt hat.
+- Das angezeigte Administratorkennwort wird gegen Portainer geprüft; wurde es dort geändert,
+  weist die Oberfläche darauf hin. Ist das Kennwort nicht mehr bekannt, setzt "Kennwort
+  zurücksetzen" es mit Portainers `helper-reset-password` neu und zeigt das neue an.
+- Statuskacheln, Containertabelle mit den veröffentlichten Ports als Links (ob HTTP oder HTTPS,
+  wird beim Anklicken geprüft), Schaltfläche "Portainer neu einrichten" für einen kontrollierten
+  Neuaufbau.
 - Containerzustand alle fünf Minuten per MQTT gemeldet (`docker/ok`, `docker/gesamt`,
   `docker/laeuft`, `docker/gestoppt`, `docker/portainer`, je ein `docker/container/<Name>`) -
   das Thema `docker/#` wird automatisch beim MQTT-Gateway registriert, kein manuelles
@@ -48,5 +56,9 @@ Dieses Plugin ist ein abgeleitetes Werk des
 und steht deshalb weiterhin unter der Apache-Lizenz 2.0 - siehe [LICENSE.md](LICENSE.md) und
 [NOTICE](NOTICE) für die im Einzelnen vorgenommenen Änderungen. Danke für die Vorarbeit, auf
 der hier aufgebaut wird!
+
+Die Idee der Links zu den Containern, die Kennwortprüfung, den Standardport 9990 und
+die neuen Icons hat [stonehage](https://github.com/stonehage) in
+[#1](https://github.com/blacksun80/LoxBerry-Plugin-Docker-NG/pull/1) beigesteuert.
 
 Weder mit Docker Inc. noch mit Portainer.io verbunden.

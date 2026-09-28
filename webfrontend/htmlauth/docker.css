@@ -121,3 +121,42 @@
 	border-top: 1px solid #eee;
 	margin: 16px 0;
 }
+
+/* Portainer-Ports */
+.dk-ports {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 16px;
+	margin: 6px 0;
+}
+.dk-ports label {
+	display: flex;
+	flex-direction: column;
+	font-size: 0.92em;
+}
+.dk-port-feld {
+	width: 110px;
+	padding: 6px 8px;
+	margin-top: 4px;
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	font-size: 1em;
+}
+
+/* Port-Links der Container */
+.dk-port {
+	display: inline-block !important;
+	margin: 2px 6px 2px 0 !important;
+	padding: 2px 8px !important;
+	border: 1px solid #b9d38f !important;
+	border-radius: 12px !important;
+	background: #f2f8ea !important;
+	color: #33691e !important;
+	font-size: 0.9em;
+	font-weight: 600;
+	text-decoration: none !important;
+	white-space: nowrap;
+}
+.dk-port:hover {
+	background: #e2efcf !important;
+}

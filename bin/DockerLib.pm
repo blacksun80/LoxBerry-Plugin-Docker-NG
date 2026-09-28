@@ -13,6 +13,7 @@ use LoxBerry::System;
 use LoxBerry::JSON;
 use LoxBerry::Log;
 use File::Path qw(make_path);
+use JSON ();
 
 our @EXPORT_OK = qw(
     docker_paths
@@ -26,10 +27,22 @@ our @EXPORT_OK = qw(
     docker_zaehlung
     docker_portainer_laeuft
     docker_portainer_einrichten
+    docker_portainer_hostports
+    docker_portainer_passwort_pruefen
+    docker_portainer_passwort_zuruecksetzen
+    docker_port_gueltig
+    docker_port_frei
+    docker_ports_vorschlagen
+    docker_container_ports
+    docker_port_schema
     docker_log
 );
 
 our $PORTAINER_IMAGE = 'portainer/portainer-ce:latest';
+
+# Standardports für Neuinstallationen (Host-Seite).
+our $PORT_HTTP_STD  = 9990;
+our $PORT_HTTPS_STD = 9443;
 
 # Eigener Containername und eigenes Datenverzeichnis - bewusst NICHT das
 # schlichte "portainer" / "/opt/portainer".
@@ -114,10 +127,13 @@ sub docker_config_read {
     my $cfg = $json->open(filename => $p->{config}, readonly => 1, locktimeout => 3);
     $cfg = {} if (!defined $cfg || ref($cfg) ne 'HASH');
 
-    $cfg->{portainer_port} = 9000 if (!$cfg->{portainer_port} || $cfg->{portainer_port} !~ /^\d+$/);
+    # Gespeicherte Ports bleiben erhalten, fehlende oder ungültige erhalten den Standardwert.
+    $cfg->{portainer_port} = $PORT_HTTP_STD if (!docker_port_gueltig($cfg->{portainer_port}));
+    $cfg->{portainer_https_port} = $PORT_HTTPS_STD if (!docker_port_gueltig($cfg->{portainer_https_port}));
     $cfg->{portainer_name} = $PORTAINER_NAME_STD
         if (!defined $cfg->{portainer_name} || $cfg->{portainer_name} !~ /^[A-Za-z0-9_.-]{1,64}$/);
     $cfg->{portainer_password} = '' if (!defined $cfg->{portainer_password});
+    $cfg->{portainer_password_geaendert} = $cfg->{portainer_password_geaendert} ? 1 : 0;
     return $cfg;
 }
 
@@ -280,28 +296,84 @@ sub docker_portainer_laeuft {
 }
 
 # ---------------- Portbelegung ----------------
-#
-# Portainers Standardport 9000 ist nicht exklusiv - z.B. AudioServer4Home
-# (sonn-core, network_mode: host) hoert selbst auf 9000. 'docker run -p 9000:9000'
-# scheitert dann mit 'address already in use', und bislang brach die gesamte
-# Portainer-Einrichtung darueber ab (bestaetigt im LoxBerry-Forum: die
-# Installation schlaegt genau dann fehl, wenn AudioServer4Home bereits laeuft -
-# ohne es installiert sich Docker NG sauber). Ein Portkonflikt ist kein Grund,
-# die Einrichtung abzubrechen - ein freier Port tut es genauso.
-sub _port_frei {
+
+# Prüft, ob $port eine Zahl von 1024 bis 65535 ist.
+sub docker_port_gueltig {
     my ($port) = @_;
-    my ($belegt) = _ausfuehren("ss -Htln sport = :$port");
-    return (scalar(@$belegt) == 0) ? 1 : 0;
+    return (defined $port && $port =~ /^\d{1,5}$/ && $port >= 1024 && $port <= 65535) ? 1 : 0;
 }
 
-# Sucht ab $start aufwaerts den ersten freien Port (max. 50 Versuche - mehr
-# deutet auf ein grundsaetzliches Problem hin, das ein Ausweichen nicht loest).
-sub _freien_port_finden {
-    my ($start) = @_;
-    for my $kandidat ($start .. $start + 49) {
-        return $kandidat if (_port_frei($kandidat));
+# Prüft per ss, ob auf $port ein TCP-Dienst lauscht.
+# Rückgabe: 1 = frei, 0 = belegt, undef = ss nicht ausführbar.
+sub docker_port_frei {
+    my ($port) = @_;
+    return 0 if (!docker_port_gueltig($port));
+    my ($belegt, $fehler, $code) = _ausfuehren("ss -Htln sport = :$port");
+    if ($code != 0) {
+        docker_log()->ERR("Portbelegung ließ sich nicht prüfen (ss, Rückgabewert $code): $fehler");
+        return undef;
     }
-    return $start;
+    return (scalar(grep { $_ ne '' } @$belegt) == 0) ? 1 : 0;
+}
+
+# Sucht ab $start bis 65535, danach ab 1024 bis $start den ersten freien
+# Port, der nicht in @ausser steht. Rückgabe: Port oder undef.
+sub _freien_port_finden {
+    my ($start, @ausser) = @_;
+    my %ausser = map { $_ => 1 } grep { defined } @ausser;
+    for my $kandidat ($start .. 65535, 1024 .. $start - 1) {
+        next if ($ausser{$kandidat});
+        my $frei = docker_port_frei($kandidat);
+        return undef if (!defined $frei);
+        return $kandidat if ($frei);
+    }
+    return undef;
+}
+
+# Liefert die Hostports des laufenden Containers $name als Hash,
+# z.B. { 9990 => 1, 9443 => 1 }. Leer, wenn der Container nicht läuft.
+sub docker_portainer_hostports {
+    my ($name) = @_;
+    my %ports;
+    my ($ausgabe, undef, $code) = _ausfuehren('docker port ' . quotemeta($name));
+    return \%ports if ($code != 0);
+    foreach my $zeile (@$ausgabe) {
+        # 9000/tcp -> 0.0.0.0:9990   bzw.   9000/tcp -> [::]:9990
+        $ports{$1} = 1 if ($zeile =~ /->\s*\S*:(\d+)\s*$/);
+    }
+    return \%ports;
+}
+
+# Port ist frei oder von Portainer selbst belegt ($eigen aus
+# docker_portainer_hostports). Rückgabe wie docker_port_frei.
+sub _port_verwendbar {
+    my ($port, $eigen) = @_;
+    return 1 if ($eigen->{$port});
+    return docker_port_frei($port);
+}
+
+# Vorschlag für "Freie Ports suchen": verwendbare Ports bleiben, belegte
+# werden durch den nächsten freien ersetzt. Rückgabe: (http, https) oder ().
+sub docker_ports_vorschlagen {
+    my $cfg   = docker_config_read();
+    my $eigen = docker_portainer_hostports($cfg->{portainer_name});
+    my $http  = $cfg->{portainer_port};
+    my $https = $cfg->{portainer_https_port};
+
+    my $ok = _port_verwendbar($http, $eigen);
+    return () if (!defined $ok);
+    if (!$ok) {
+        $http = _freien_port_finden($http + 1, $https);
+        return () if (!defined $http);
+    }
+
+    $ok = ($https != $http) ? _port_verwendbar($https, $eigen) : 0;
+    return () if (!defined $ok);
+    if (!$ok) {
+        $https = _freien_port_finden($https + 1, $http);
+        return () if (!defined $https);
+    }
+    return ($http, $https);
 }
 
 # ---------------- Portainer einrichten ----------------
@@ -318,67 +390,59 @@ sub _freien_port_finden {
 # davon unberuehrt, das Konto darin ueberlebt die Neuerstellung des
 # Containers und der neue Aufruf hat dann ohnehin keine Wirkung mehr).
 #
-# Ohne '--http-enabled' antwortet Portainer ab 2.19 auf Port 9000 nicht mit
-# der Anmeldeseite, sondern mit einer Weiterleitung auf /timeout.html - der
-# Port wirkt dann offen, ist es aber nicht. Deshalb zusaetzlich Port 9443
-# freigeben.
+# Portainer lauscht im Container auf 9000 (HTTP, mit --http-enabled) und
+# 9443 (HTTPS). Die Hostports stammen aus der Konfiguration oder aus $wunsch
+# ({ http => ..., https => ... }); ein belegter Konfigurationsport wird durch
+# den nächsten freien ersetzt, ein belegter Wunschport führt zum Abbruch.
 #
-# Rueckgabe: (erfolg, meldung).
+# Rückgabe: (erfolg, meldung, schlüssel, argumente...). Der Schlüssel benennt
+# den Fehler für die Übersetzung in der Oberfläche (language_*.ini).
 sub docker_portainer_einrichten {
-    my ($force) = @_;
+    my ($force, $wunsch) = @_;
     my $cfg  = docker_config_read();
     my $name = $cfg->{portainer_name};
-    my $port = $cfg->{portainer_port};
     my $qname = quotemeta($name);
+
+    # Wunschports prüfen, solange der bestehende Container noch unangetastet ist.
+    if ($wunsch) {
+        my ($http, $https) = ($wunsch->{http}, $wunsch->{https});
+        if (!docker_port_gueltig($http) || !docker_port_gueltig($https)) {
+            return (0, 'Die Ports müssen Zahlen von 1024 bis 65535 sein.', 'FEHLER_PORT_UNGUELTIG');
+        }
+        if ($http == $https) {
+            return (0, 'HTTP- und HTTPS-Port dürfen nicht gleich sein.', 'FEHLER_PORT_GLEICH');
+        }
+        my $eigen = docker_portainer_hostports($name);
+        foreach my $p ($http, $https) {
+            my $ok = _port_verwendbar($p, $eigen);
+            return (0, 'Die Portbelegung ließ sich nicht prüfen (ss).', 'FEHLER_PORT_PRUEFUNG') if (!defined $ok);
+            return (0, "Port $p wird bereits von einem anderen Dienst verwendet.", 'FEHLER_PORT_BELEGT', $p) if (!$ok);
+        }
+        $cfg->{portainer_port}       = $http + 0;
+        $cfg->{portainer_https_port} = $https + 0;
+        $force = 1;
+    }
+
+    my $port       = $cfg->{portainer_port};
+    my $https_port = $cfg->{portainer_https_port};
 
     my ($korrekt) = _ausfuehren(
         "docker ps --filter ancestor=$PORTAINER_IMAGE --filter name=$qname -q");
     my $laeuft_korrekt = (scalar(@$korrekt) > 0) ? 1 : 0;
 
     if ($laeuft_korrekt && !$force) {
-        docker_log()->INF('Portainer laeuft bereits in der erwarteten Version - nichts zu tun.');
-        return (1, 'Portainer laeuft bereits in der erwarteten Version - nichts zu tun.');
-    }
-
-    docker_log()->INF("Richte Portainer ein (force=$force, name=$name, port=$port).");
-
-    # Vorhandenen Container entfernen, egal in welchem Zustand (laeuft,
-    # gestoppt, falsche Version). Das Datenverzeichnis bleibt unberuehrt - das ist
-    # ein Bind-Mount auf ein Host-Verzeichnis, kein vom Container verwaltetes
-    # Volume, und geht beim Entfernen des Containers nicht verloren.
-    my ($vorhanden) = _ausfuehren("docker ps -a --filter name=$qname -q");
-    if (@$vorhanden) {
-        my (undef, $fehler, $code) = _ausfuehren('docker rm --force ' . $qname);
-        if ($code != 0) {
-            docker_log()->ERR("Vorhandener Container liess sich nicht entfernen: $fehler");
-            return (0, "Vorhandener Container liess sich nicht entfernen: $fehler");
+        # Container mit Passwortdatei unter /tmp (Version 1.0) wird neu aufgebaut.
+        my ($quellen) = _ausfuehren("docker inspect --format '{{range .Mounts}}{{.Source}} {{end}}' $qname");
+        if (join(' ', @$quellen) !~ m{^/tmp/|\s/tmp/}) {
+            docker_log()->INF('Portainer laeuft bereits in der erwarteten Version - nichts zu tun.');
+            return (1, 'Portainer laeuft bereits in der erwarteten Version - nichts zu tun.');
         }
-        docker_log()->INF('Vorhandener Container entfernt.');
+        docker_log()->INF('Portainer nutzt noch eine Passwortdatei unter /tmp - wird neu aufgebaut.');
     }
 
-    # Portpruefung ERST NACH dem Entfernen des alten Containers: hielt
-    # Portainer selbst den Port (Normalfall bei einem Neuaufbau), ist er jetzt
-    # frei und wuerde sonst faelschlich als 'belegt' gelten.
-    if (!_port_frei($port)) {
-        my $ausweich = _freien_port_finden($port + 1);
-        docker_log()->WARN("Port $port ist belegt (vermutlich ein anderer Dienst mit "
-            . "eigenem Netzwerk, z.B. AudioServer4Home) - weiche auf Port $ausweich aus.");
-        $port = $ausweich;
-        $cfg->{portainer_port} = $port;
-    }
+    docker_log()->INF("Richte Portainer ein (force=$force, name=$name, http=$port, https=$https_port).");
 
-    # Der HTTPS-Zusatzport ist ein Bonus, kein Muss - '--http-enabled' macht
-    # Portainer bereits ueber $port vollstaendig erreichbar. Ist 9443 belegt,
-    # wird die Zuordnung einfach weggelassen statt die ganze Einrichtung
-    # daran scheitern zu lassen.
-    my $https_zuordnung = ' -p=9443:9443';
-    if (!_port_frei(9443)) {
-        docker_log()->WARN('Port 9443 ist belegt - Portainer bleibt ohne den optionalen '
-            . 'HTTPS-Zusatzport erreichbar, der normale Zugang ueber Port '
-            . $port . ' funktioniert davon unabhaengig.');
-        $https_zuordnung = '';
-    }
-
+    # Abbild und Passwortdatei vorbereiten, solange der bestehende Container noch läuft.
     my (undef, $pullfehler, $pullcode) = _ausfuehren("docker pull $PORTAINER_IMAGE");
     if ($pullcode != 0) {
         docker_log()->ERR("Abbild liess sich nicht laden: $pullfehler");
@@ -390,8 +454,15 @@ sub docker_portainer_einrichten {
     # sonst neu erzeugen. So bleibt ein bereits bekanntes Anmeldepasswort
     # gueltig, statt bei jedem Neuaufbau ein neues zu wuerfeln.
     my $passwort = $cfg->{portainer_password};
+    my $passwort_unbekannt = 0;
     if (!$passwort) {
         $passwort = docker_password_neu();
+        # Bestehende Portainer-Datenbank: Das Kennwort aus der Datei wird nicht
+        # übernommen, deshalb bleibt es unbekannt und wird nicht gespeichert.
+        if (-e "$PORTAINER_DATA/portainer.db") {
+            $passwort_unbekannt = 1;
+            docker_log()->WARN('Portainer hat bereits ein Administratorkonto, dessen Kennwort nicht gespeichert ist.');
+        }
     }
 
     # Die Passwortdatei liegt DAUERHAFT im Datenverzeichnis - nicht in /tmp,
@@ -433,14 +504,16 @@ sub docker_portainer_einrichten {
     # Nur schreiben, wenn noetig. Steht das richtige Passwort schon drin,
     # bleibt die Datei unangetastet - das vermeidet einen Schreibversuch in
     # Faellen, in denen die Rechte nicht passen, obwohl gar nichts zu tun ist.
-    my $vorhanden = '';
+    my $pw_vorhanden = '';
     if (open(my $lesen, '<', $pwdatei)) {
         local $/;
-        $vorhanden = <$lesen> // '';
+        $pw_vorhanden = <$lesen> // '';
         close($lesen);
     }
 
-    if ($vorhanden ne $passwort) {
+    if ($pw_vorhanden ne $passwort) {
+        # Nicht beschreibbare Datei (z.B. von root angelegt) im eigenen Verzeichnis ersetzen.
+        unlink($pwdatei) if (-e $pwdatei && !-w $pwdatei);
         if (!open(my $fh, '>', $pwdatei)) {
             docker_log()->ERR("Passwortdatei liess sich nicht anlegen: $!");
             return (0, "Passwortdatei liess sich nicht anlegen: $!");
@@ -450,12 +523,58 @@ sub docker_portainer_einrichten {
         }
     }
     chmod 0600, $pwdatei;
+    if ($> == 0) {
+        my (undef, undef, $uid, $gid) = getpwnam('loxberry');
+        chown($uid, $gid, $pwdatei) if (defined $uid);
+    }
+
+    # Vorhandenen Container entfernen, egal in welchem Zustand (laeuft,
+    # gestoppt, falsche Version). Das Datenverzeichnis bleibt unberuehrt - das ist
+    # ein Bind-Mount auf ein Host-Verzeichnis, kein vom Container verwaltetes
+    # Volume, und geht beim Entfernen des Containers nicht verloren.
+    my ($vorhanden) = _ausfuehren("docker ps -a --filter name=$qname -q");
+    if (@$vorhanden) {
+        my (undef, $fehler, $code) = _ausfuehren('docker rm --force ' . $qname);
+        if ($code != 0) {
+            docker_log()->ERR("Vorhandener Container liess sich nicht entfernen: $fehler");
+            return (0, "Vorhandener Container liess sich nicht entfernen: $fehler");
+        }
+        docker_log()->INF('Vorhandener Container entfernt.');
+    }
+
+    # Portprüfung nach dem Entfernen des alten Containers, dessen Ports jetzt frei sind.
+    foreach my $art ('http', 'https') {
+        my $schluessel = ($art eq 'http') ? 'portainer_port' : 'portainer_https_port';
+        my $anderer    = ($art eq 'http') ? $cfg->{portainer_https_port} : $cfg->{portainer_port};
+        my $p = $cfg->{$schluessel};
+
+        my $frei = docker_port_frei($p);
+        if (!defined $frei) {
+            return (0, 'Die Portbelegung ließ sich nicht prüfen (ss).', 'FEHLER_PORT_PRUEFUNG');
+        }
+        next if ($frei);
+
+        if ($wunsch) {
+            docker_log()->ERR("Port $p wurde zwischenzeitlich von einem anderen Dienst belegt.");
+            return (0, "Port $p wird bereits von einem anderen Dienst verwendet.", 'FEHLER_PORT_BELEGT', $p);
+        }
+
+        my $ausweich = _freien_port_finden($p + 1, $anderer);
+        if (!defined $ausweich) {
+            docker_log()->ERR("Für $art ist kein freier Port zu finden.");
+            return (0, "Für $art ist kein freier Port zu finden.", 'FEHLER_KEIN_PORT');
+        }
+        docker_log()->WARN("Port $p ($art) ist belegt - weiche auf Port $ausweich aus.");
+        $cfg->{$schluessel} = $ausweich;
+    }
+    $port       = $cfg->{portainer_port};
+    $https_port = $cfg->{portainer_https_port};
 
     my $run = 'docker run'
         . ' --volume=/var/run/docker.sock:/var/run/docker.sock'
         . " --volume=$PORTAINER_DATA:/data"
         . " --volume=$pwdatei:/run/portainer_admin_password:ro"
-        . " -p=$port:9000$https_zuordnung"
+        . " -p=$port:9000 -p=$https_port:9443"
         . " --name=$qname --restart=unless-stopped --detach=true"
         . " $PORTAINER_IMAGE --http-enabled --admin-password-file=/run/portainer_admin_password";
     my (undef, $runfehler, $runcode) = _ausfuehren($run);
@@ -484,7 +603,10 @@ sub docker_portainer_einrichten {
     # bedeutet nicht "nicht eingerichtet", sondern "eingerichtet, aber das
     # Passwort ist verloren". Beides zu vermelden waere falsch: (1,...) taeuscht
     # Erfolg vor, obwohl niemand mehr weiss, mit welchem Passwort man hineinkommt.
-    $cfg->{portainer_password} = $passwort;
+    if (!$passwort_unbekannt) {
+        $cfg->{portainer_password} = $passwort;
+        $cfg->{portainer_password_geaendert} = 0;
+    }
     if (!docker_config_write($cfg)) {
         docker_log()->ERR('Portainer laeuft, aber das Passwort liess sich nicht speichern.');
         return (0, 'Portainer laeuft, aber das Passwort liess sich NICHT speichern. '
@@ -494,6 +616,138 @@ sub docker_portainer_einrichten {
 
     docker_log()->OK('Portainer wurde eingerichtet.');
     return (1, 'Portainer wurde eingerichtet.');
+}
+
+# Meldet sich mit Benutzer "admin" und $passwort testweise an Portainer an.
+# Rückgabe: 1 = Kennwort gültig, 0 = abgelehnt (422 "Invalid credentials"), undef = nicht prüfbar.
+sub docker_portainer_passwort_pruefen {
+    my ($port, $passwort) = @_;
+    return undef if (!docker_port_gueltig($port) || !$passwort);
+
+    # Anmeldedaten als Datei an curl, damit das Kennwort nicht in der Prozessliste steht.
+    my $datei = "/tmp/dockerplugin_auth.$$";
+    my $fh;
+    return undef if (!open($fh, '>', $datei));
+    chmod 0600, $datei;
+    print {$fh} JSON::to_json({ Username => 'admin', Password => $passwort });
+    close($fh);
+
+    my ($ausgabe, undef, undef) = _ausfuehren(
+        "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 3"
+        . " -H 'Content-Type: application/json' --data-binary \@$datei"
+        . " http://127.0.0.1:$port/api/auth");
+    unlink($datei);
+
+    my $status = (@$ausgabe) ? $ausgabe->[0] : '';
+    return 1 if ($status eq '200');
+    return 0 if ($status eq '422');
+    return undef;
+}
+
+# Setzt das Kennwort des ersten Portainer-Administrators mit dem Hilfsabbild
+# portainer/helper-reset-password zurück: Abbild laden, Portainer stoppen,
+# zurücksetzen, Portainer wieder starten, neues Kennwort speichern.
+# Rückgabe: (erfolg, meldung).
+sub docker_portainer_passwort_zuruecksetzen {
+    my $cfg   = docker_config_read();
+    my $qname = quotemeta($cfg->{portainer_name});
+    my $hilfe = 'portainer/helper-reset-password';
+
+    if (!-e "$PORTAINER_DATA/portainer.db") {
+        return (0, 'Portainer hat noch kein Administratorkonto.');
+    }
+
+    my (undef, $pullfehler, $pullcode) = _ausfuehren("docker pull $hilfe");
+    if ($pullcode != 0) {
+        docker_log()->ERR("Hilfsabbild liess sich nicht laden: $pullfehler");
+        return (0, "Hilfsabbild liess sich nicht laden: $pullfehler");
+    }
+
+    docker_log()->INF('Setze das Kennwort des Portainer-Administrators zurück.');
+    _ausfuehren("docker stop $qname");
+    my ($ausgabe, $fehler, $code) = _ausfuehren("docker run --rm --volume=$PORTAINER_DATA:/data $hilfe");
+    my (undef, $startfehler, $startcode) = _ausfuehren("docker start $qname");
+
+    my ($benutzer, $passwort);
+    foreach my $zeile (@$ausgabe, split(/\n/, $fehler)) {
+        $benutzer = $1 if ($zeile =~ /Password successfully updated for user: (\S+)\s*$/);
+        $passwort = $1 if ($zeile =~ /Use the following password to login: (\S+)\s*$/);
+    }
+    if ($code != 0 || !defined $passwort) {
+        docker_log()->ERR("Zurücksetzen fehlgeschlagen (Rückgabewert $code): $fehler");
+        return (0, "Zurücksetzen fehlgeschlagen: $fehler");
+    }
+    if ($startcode != 0) {
+        docker_log()->ERR("Portainer liess sich nach dem Zurücksetzen nicht starten: $startfehler");
+    }
+    docker_log()->OK("Kennwort für Benutzer " . ($benutzer // '?') . " zurückgesetzt.");
+
+    # Passwortdatei auf das neue Kennwort bringen (bei bestehendem Konto von Portainer ignoriert).
+    my $pwdatei = "$PORTAINER_DATA/.admin_password";
+    unlink($pwdatei) if (-e $pwdatei && !-w $pwdatei);
+    if (open(my $fh, '>', $pwdatei)) {
+        chmod 0600, $pwdatei;
+        print {$fh} $passwort;
+        close($fh);
+    }
+
+    if (!docker_config_write({ portainer_password => $passwort, portainer_password_geaendert => 0 })) {
+        docker_log()->ERR('Das neue Kennwort liess sich nicht speichern.');
+        return (0, "Das Kennwort wurde zurückgesetzt, liess sich aber nicht speichern. Neues Kennwort: $passwort");
+    }
+    return (1, 'Das Kennwort wurde zurückgesetzt.');
+}
+
+# ---------------- Ports der Container ----------------
+
+# Liefert für alle laufenden Container die veröffentlichten TCP-Hostports:
+# { name => [ { port => ..., ip => ... }, ... ] }, nach Port sortiert. ip ist die
+# Adresse, an die der Port gebunden ist (127.0.0.1 bei 0.0.0.0/::). Bei
+# network_mode host die im Abbild freigegebenen Ports. An 127.0.0.1/::1
+# gebundene Ports fehlen, da sie vom Browser aus nicht erreichbar sind.
+sub docker_container_ports {
+    my %ergebnis;
+    my ($ids, undef, $code) = _ausfuehren('docker ps -q');
+    return \%ergebnis if ($code != 0);
+    my @ids = grep { /^[0-9a-f]+$/ } @$ids;
+    return \%ergebnis if (!@ids);
+
+    my $format = q({{.Name}}|{{.HostConfig.NetworkMode}}|)
+        . q({{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{$p}}={{.HostIp}}={{.HostPort}} {{end}}{{end}}|)
+        . q({{range $p, $v := .Config.ExposedPorts}}{{$p}} {{end}});
+    my ($zeilen, undef, $icode) = _ausfuehren("docker inspect --format '$format' " . join(' ', @ids));
+    return \%ergebnis if ($icode != 0);
+
+    foreach my $zeile (@$zeilen) {
+        my ($name, $netz, $veroeffentlicht, $freigegeben) = split(/\|/, $zeile, 4);
+        next if (!defined $name || $name eq '');
+        $name =~ s{^/}{};
+
+        my %ports;
+        foreach my $eintrag (split(/\s+/, $veroeffentlicht // '')) {
+            my ($intern, $ip, $hostport) = split(/=/, $eintrag, 3);
+            next if (!defined $hostport || $hostport !~ /^\d+$/ || $intern !~ m{/tcp$});
+            next if ($ip eq '127.0.0.1' || $ip eq '::1');
+            $ports{$hostport} //= ($ip eq '' || $ip eq '0.0.0.0' || $ip eq '::') ? '127.0.0.1' : $ip;
+        }
+        if (($netz // '') eq 'host') {
+            foreach my $p (split(/\s+/, $freigegeben // '')) {
+                $ports{$1} //= '127.0.0.1' if ($p =~ m{^(\d+)/tcp$});
+            }
+        }
+        $ergebnis{$name} = [ map { { port => $_, ip => $ports{$_} } } sort { $a <=> $b } keys %ports ];
+    }
+    return \%ergebnis;
+}
+
+# Prüft, ob $ip:$port HTTPS spricht (TLS-Verbindung mit beliebiger HTTP-Antwort).
+# Rückgabe: 'https' oder 'http'.
+sub docker_port_schema {
+    my ($ip, $port) = @_;
+    return 'http' if (!docker_port_gueltig($port) || ($ip // '') !~ /^[0-9A-Fa-f.:]+$/);
+    my $adresse = ($ip =~ /:/) ? "[$ip]" : $ip;
+    my (undef, undef, $code) = _ausfuehren("curl -s -k -o /dev/null --max-time 3 https://$adresse:$port/");
+    return ($code == 0) ? 'https' : 'http';
 }
 
 1;

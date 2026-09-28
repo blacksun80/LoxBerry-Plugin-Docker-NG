@@ -21,6 +21,9 @@ vorgenommenen Aenderungen deutlich kennzeichnen. Es sind diese:
     verlangen. --http-enabled ergaenzt: ab Portainer CE 2.19 blieb Port 9000
     sonst stumm (Weiterleitung auf /timeout.html statt der Anmeldeseite).
 
+  * Portainer-Ports: Standard 9990 (HTTP) und 9443 (HTTPS) statt fest 9000,
+    automatisches Ausweichen auf freie Ports, in der Oberflaeche einstellbar.
+
   * preroot.sh (neu) und postroot.sh: die Konfiguration (inkl. des
     Administratorkennworts) wird vor einem Update gesichert und danach
     zurueckgeholt. LoxBerry loescht den Konfigurationsordner bei jedem Update,
