@@ -12,7 +12,8 @@ Kapazität für die Weiterpflege.
 ## Voraussetzungen
 
 - LoxBerry 3.0.0 oder neuer.
-- Raspberry Pi oder x86-System, **32-Bit und 64-Bit** - Docker Engine und Portainer bieten
+- Raspberry Pi, anderes ARM-Board (z. B. Radxa, Orange Pi) oder x86-System, **32-Bit und
+  64-Bit** - Docker Engine und Portainer bieten
   beide `armv7`-Abbilder an, im Gegensatz zu manchen anderen Docker-basierten Anwendungen.
 - Internetzugang zum Herunterladen von Docker-Engine und Portainer-Abbild.
 
