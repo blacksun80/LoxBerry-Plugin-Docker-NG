@@ -1,10 +1,8 @@
 <p><TMPL_VAR HELP.INTRO></p>
-<p>
-	<TMPL_VAR HELP.WIKI_INFO>
-	<a href="<TMPL_VAR HELP.WIKI_LINK>" target="_blank"><TMPL_VAR HELP.WIKI_LINK_TEXT></a>
-</p>
-<p>
-	<TMPL_VAR HELP.GITHUB_INFO>
-	<a href="<TMPL_VAR HELP.GITHUB_LINK>" target="_blank"><TMPL_VAR HELP.GITHUB_LINK_TEXT></a>
-</p>
+<p><TMPL_VAR HELP.LINKS_INFO></p>
+<ul>
+	<li><a href="<TMPL_VAR HELP.GITHUB_LINK>" target="_blank" rel="noopener"><TMPL_VAR HELP.GITHUB_LINK_TEXT></a></li>
+	<li><a href="<TMPL_VAR HELP.FORUM_LINK>" target="_blank" rel="noopener"><TMPL_VAR HELP.FORUM_LINK_TEXT></a></li>
+	<li><a href="<TMPL_VAR HELP.WIKI_LINK>" target="_blank" rel="noopener"><TMPL_VAR HELP.WIKI_LINK_TEXT></a></li>
+</ul>
 <p><TMPL_VAR HELP.CREDITS></p>
